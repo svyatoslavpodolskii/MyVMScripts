@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chatwoot — уведомления о сообщениях
 // @namespace    uplink-chatwoot
-// @version      2.3.3
+// @version      2.3.4
 // @description  Уведомления о новых сообщениях с защитой от повторов и настройками разделов.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -257,7 +257,7 @@
     `;
 
     row.onmouseenter = () => {
-      row.style.background = 'var(--color-n-slate-3, rgba(128,128,128,.12))';
+      row.style.background = 'rgba(128,128,128,.12)';
     };
 
     row.onmouseleave = () => {
@@ -410,7 +410,26 @@
     const menu = document.createElement('div');
     menu.id = MENU_ID;
 
-    menu.className = 'bg-n-surface-1 text-n-slate-12';
+    if (!document.getElementById(`${MENU_ID}Theme`)) {
+      const style = document.createElement('style');
+      style.id = `${MENU_ID}Theme`;
+      style.textContent = `
+        #${MENU_ID} {
+          background: #fff;
+          color: #1e293b;
+          color-scheme: light;
+        }
+        .dark #${MENU_ID}, [data-theme="dark"] #${MENU_ID} {
+          background: #1e293b;
+          color: #f1f5f9;
+          color-scheme: dark;
+        }
+        #${MENU_ID} div, #${MENU_ID} label, #${MENU_ID} span {
+          color: inherit;
+        }
+      `;
+      document.head.appendChild(style);
+    }
 
     menu.style.cssText = `
       display:none;
@@ -425,8 +444,6 @@
       border:1px solid var(--color-n-slate-4, rgba(128,128,128,.25));
       border-radius:12px;
       box-shadow:0 8px 30px rgba(0,0,0,.22);
-      background:#1e293b;
-      color:#f1f5f9;
     `;
 
     button.addEventListener('click', (event) => {
