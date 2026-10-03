@@ -1,0 +1,471 @@
+// ==UserScript==
+// @name         Домовой — сохранение и форматирование адресов
+// @namespace    http://tampermonkey.net/
+// @version      3.3.3
+// @description  Форматирование адресов и сохранение поискового запроса отдельно для каждого раздела.
+// @author       Svyatoslav Podolskii
+// @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
+// @supportURL   https://github.com/svyatoslavpodolskii/MyVMScripts/issues
+// @updateURL    https://raw.githubusercontent.com/svyatoslavpodolskii/MyVMScripts/main/%D0%94%D0%BE%D0%BC%D0%BE%D0%B2%D0%BE%D0%B9%20%E2%80%94%20%D1%81%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B5%D0%BD%D0%B8%D0%B5%20%D0%B8%20%D1%84%D0%BE%D1%80%D0%BC%D0%B0%D1%82%D0%B8%D1%80%D0%BE%D0%B2%D0%B0%D0%BD%D0%B8%D0%B5%20%D0%B0%D0%B4%D1%80%D0%B5%D1%81%D0%BE%D0%B2.user.js
+// @downloadURL  https://raw.githubusercontent.com/svyatoslavpodolskii/MyVMScripts/main/%D0%94%D0%BE%D0%BC%D0%BE%D0%B2%D0%BE%D0%B9%20%E2%80%94%20%D1%81%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B5%D0%BD%D0%B8%D0%B5%20%D0%B8%20%D1%84%D0%BE%D1%80%D0%BC%D0%B0%D1%82%D0%B8%D1%80%D0%BE%D0%B2%D0%B0%D0%BD%D0%B8%D0%B5%20%D0%B0%D0%B4%D1%80%D0%B5%D1%81%D0%BE%D0%B2.user.js
+// @match        https://my.domovoy.city/*
+// @run-at       document-idle
+// @noframes
+// @grant        none
+// ==/UserScript==
+
+(() => {
+  'use strict';
+
+  if (window.top !== window.self) return;
+  if (location.origin !== 'https://my.domovoy.city') return;
+
+  const TARGET_SELECTOR = '.base-search .base-input__field';
+
+  const VALUE_PREFIX = 'lastSearchAddress:';
+
+  const FORMAT_KEY = 'addressFormatterEnabled';
+  const SAVE_KEY = 'addressSaveEnabled';
+
+  const internalUpdate = new WeakSet();
+
+  let lastSection = null;
+  let lastInput = null;
+
+  function getSection() {
+    const parts = location.pathname.split('/').filter(Boolean);
+
+    if (parts[0] && /^[a-z]{2}(?:-[a-z]{2})?$/i.test(parts[0])) {
+      parts.shift();
+    }
+
+    return parts[0] || 'default';
+  }
+
+  function getStorageKey(section = getSection()) {
+    return VALUE_PREFIX + section;
+  }
+
+  function isFormatEnabled() {
+    return localStorage.getItem(FORMAT_KEY) !== '0';
+  }
+
+  function isSaveEnabled() {
+    return localStorage.getItem(SAVE_KEY) !== '0';
+  }
+
+  function smartFormat(val) {
+    if (!val) return '';
+
+    let res = val;
+
+    res = res.replace(/(\d+)\s+(п\.?)/g, '$1, $2');
+
+    res = res.replace(/([а-яА-Яa-zA-Z])\s+(\d)/g, '$1, $2');
+
+    res = res.replace(/(\d+)\s+(\d+)/g, '$1, $2');
+
+    return res.replace(/,+/g, ',').replace(/,\s*,/g, ',');
+  }
+
+  function setNativeValue(element, value) {
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    ).set;
+
+    const prototype = Object.getPrototypeOf(element);
+
+    const prototypeValueSetter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+
+    if (prototypeValueSetter && valueSetter !== prototypeValueSetter) {
+      prototypeValueSetter.call(element, value);
+    } else {
+      valueSetter.call(element, value);
+    }
+
+    element.dispatchEvent(
+      new Event('input', {
+        bubbles: true
+      })
+    );
+  }
+
+  function setValueSafely(input, value) {
+    internalUpdate.add(input);
+
+    try {
+      setNativeValue(input, value);
+    } finally {
+      internalUpdate.delete(input);
+    }
+  }
+
+  function getInput() {
+    return document.querySelector(TARGET_SELECTOR);
+  }
+
+  function saveValue(input) {
+    if (!input || !isSaveEnabled()) {
+      return;
+    }
+
+    localStorage.setItem(getStorageKey(), input.value);
+  }
+
+  function restoreCurrentSection(input) {
+    if (!input) return;
+
+    const section = getSection();
+
+    setValueSafely(input, '');
+
+    if (!isSaveEnabled()) {
+      return;
+    }
+
+    const saved = localStorage.getItem(getStorageKey(section));
+
+    if (saved !== null) {
+      setValueSafely(input, saved);
+    }
+  }
+
+  function setupInput(input) {
+    if (input.dataset.affManaged === 'true') {
+      return;
+    }
+
+    input.dataset.affManaged = 'true';
+
+    const wrapper = input.closest('.base-input-wrapper');
+
+    if (wrapper) {
+      wrapper.style.position = 'relative';
+    }
+
+    input.addEventListener('input', (e) => {
+      // Это наше input-событие. Не дадим восстановлению затереть сохранённый адрес.
+      if (internalUpdate.has(input)) {
+        return;
+      }
+
+      const original = e.target.value;
+
+      let formatted = original;
+
+      if (isFormatEnabled()) {
+        formatted = smartFormat(original);
+      }
+
+      if (original !== formatted) {
+        const cursor = e.target.selectionStart;
+
+        const offset = formatted.length - original.length;
+
+        setValueSafely(e.target, formatted);
+
+        const newCursor = Math.max(0, Math.min(formatted.length, cursor + offset));
+
+        try {
+          e.target.setSelectionRange(newCursor, newCursor);
+        } catch (_) {}
+      }
+
+      if (isSaveEnabled()) {
+        localStorage.setItem(getStorageKey(), formatted);
+      }
+    });
+
+    if (wrapper && !wrapper.querySelector('.tm-reset-btn')) {
+      const btn = document.createElement('span');
+
+      btn.className = 'tm-reset-btn';
+
+      btn.innerHTML = '&#10005;';
+
+      btn.title = 'Очистить поиск';
+
+      btn.style.cssText = `
+                position:absolute;
+                right:8px;
+                top:50%;
+                transform:translateY(-50%);
+                cursor:pointer;
+                color:#ccc;
+                font-size:14px;
+                z-index:9999;
+                padding:4px;
+                line-height:1;
+                display:block;
+                user-select:none;
+            `;
+
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+      });
+
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        setValueSafely(input, '');
+
+        localStorage.removeItem(getStorageKey());
+
+        input.focus();
+      });
+
+      wrapper.appendChild(btn);
+
+      input.style.paddingRight = '30px';
+    }
+  }
+
+  const FORMAT_ICON = `
+        <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+        >
+            <path
+                d="M12 2.5L13.4 6.6L17.5 8L13.4 9.4L12 13.5L10.6 9.4L6.5 8L10.6 6.6L12 2.5Z"
+                fill="currentColor"
+            />
+            <path
+                d="M18.5 13L19.4 15.6L22 16.5L19.4 17.4L18.5 20L17.6 17.4L15 16.5L17.6 15.6L18.5 13Z"
+                fill="currentColor"
+            />
+        </svg>
+    `;
+
+  const SAVE_ICON = `
+        <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+        >
+            <path
+                d="M5 3H16L20 7V21H5V3Z"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linejoin="round"
+            />
+            <path
+                d="M8 3V9H16V3"
+                stroke="currentColor"
+                stroke-width="1.8"
+            />
+            <path
+                d="M8 21V14H17V21"
+                stroke="currentColor"
+                stroke-width="1.8"
+            />
+        </svg>
+    `;
+
+  function addStyles() {
+    if (document.getElementById('aff-style')) {
+      return;
+    }
+
+    const style = document.createElement('style');
+
+    style.id = 'aff-style';
+
+    style.textContent = `
+            .aff-top-btn {
+                width:36px !important;
+                min-width:36px !important;
+                height:36px !important;
+                padding:0 !important;
+
+                display:inline-flex !important;
+                align-items:center !important;
+                justify-content:center !important;
+
+                border-radius:8px !important;
+                cursor:pointer !important;
+
+                transition:
+                    background .15s ease,
+                    color .15s ease,
+                    opacity .15s ease,
+                    transform .1s ease !important;
+            }
+
+            .aff-top-btn:active {
+                transform:scale(.93);
+            }
+
+            .aff-top-btn.aff-on {
+                background:
+                    rgba(255,220,98,.18)
+                    !important;
+
+                color:
+                    #ffdc62
+                    !important;
+
+                opacity:1 !important;
+            }
+
+            .aff-top-btn.aff-off {
+                background:
+                    transparent
+                    !important;
+
+                color:
+                    #8e8e93
+                    !important;
+
+                opacity:.5 !important;
+            }
+        `;
+
+    document.head.appendChild(style);
+  }
+
+  function createButton(className, icon) {
+    const btn = document.createElement('button');
+
+    btn.type = 'button';
+
+    btn.className = `transparent-button aff-top-btn ${className}`;
+
+    btn.innerHTML = icon;
+
+    return btn;
+  }
+
+  function updateButtons() {
+    const formatBtn = document.querySelector('.aff-format-btn');
+
+    const saveBtn = document.querySelector('.aff-save-btn');
+
+    if (formatBtn) {
+      const active = isFormatEnabled();
+
+      formatBtn.classList.toggle('aff-on', active);
+
+      formatBtn.classList.toggle('aff-off', !active);
+
+      formatBtn.title = active ? 'Автоформатирование включено' : 'Автоформатирование выключено';
+    }
+
+    if (saveBtn) {
+      const active = isSaveEnabled();
+
+      saveBtn.classList.toggle('aff-on', active);
+
+      saveBtn.classList.toggle('aff-off', !active);
+
+      saveBtn.title = active ? 'Сохранение включено' : 'Сохранение выключено';
+    }
+  }
+
+  function addTopButtons() {
+    addStyles();
+
+    const notification = document.querySelector('.button-notification');
+
+    if (!notification || !notification.parentElement) {
+      return;
+    }
+
+    const parent = notification.parentElement;
+
+    if (!document.querySelector('.aff-format-btn')) {
+      const btn = createButton('aff-format-btn', FORMAT_ICON);
+
+      btn.addEventListener('mousedown', (e) => e.preventDefault());
+
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const enabled = !isFormatEnabled();
+
+        localStorage.setItem(FORMAT_KEY, enabled ? '1' : '0');
+
+        if (enabled) {
+          const input = getInput();
+
+          if (input) {
+            const formatted = smartFormat(input.value);
+
+            if (formatted !== input.value) {
+              setValueSafely(input, formatted);
+            }
+
+            if (isSaveEnabled()) {
+              localStorage.setItem(getStorageKey(), formatted);
+            }
+          }
+        }
+
+        updateButtons();
+      });
+
+      parent.insertBefore(btn, notification);
+    }
+
+    if (!document.querySelector('.aff-save-btn')) {
+      const btn = createButton('aff-save-btn', SAVE_ICON);
+
+      btn.addEventListener('mousedown', (e) => e.preventDefault());
+
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const enabled = !isSaveEnabled();
+
+        localStorage.setItem(SAVE_KEY, enabled ? '1' : '0');
+
+        if (enabled) {
+          const input = getInput();
+
+          if (input) {
+            localStorage.setItem(getStorageKey(), input.value);
+          }
+        }
+
+        updateButtons();
+      });
+
+      parent.insertBefore(btn, notification);
+    }
+
+    updateButtons();
+  }
+
+  function checkSection() {
+    const input = getInput();
+
+    if (!input) return;
+
+    setupInput(input);
+
+    const section = getSection();
+
+    if (section !== lastSection || input !== lastInput) {
+      lastSection = section;
+
+      lastInput = input;
+
+      restoreCurrentSection(input);
+    }
+  }
+
+  function init() {
+    checkSection();
+    addTopButtons();
+  }
+
+  setInterval(init, 300);
+})();

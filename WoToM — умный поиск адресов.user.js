@@ -1,9 +1,13 @@
 // ==UserScript==
 // @name         WoToM — умный поиск адресов
 // @namespace    uplink.kz
-// @version      1.8.12
+// @version      1.8.13
 // @description  Находит адреса в свободном формате, кэширует справочники и открывает дома и абонентов.
 // @author       Svyatoslav Podolskii
+// @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
+// @supportURL   https://github.com/svyatoslavpodolskii/MyVMScripts/issues
+// @updateURL    https://raw.githubusercontent.com/svyatoslavpodolskii/MyVMScripts/main/WoToM%20%E2%80%94%20%D1%83%D0%BC%D0%BD%D1%8B%D0%B9%20%D0%BF%D0%BE%D0%B8%D1%81%D0%BA%20%D0%B0%D0%B4%D1%80%D0%B5%D1%81%D0%BE%D0%B2.user.js
+// @downloadURL  https://raw.githubusercontent.com/svyatoslavpodolskii/MyVMScripts/main/WoToM%20%E2%80%94%20%D1%83%D0%BC%D0%BD%D1%8B%D0%B9%20%D0%BF%D0%BE%D0%B8%D1%81%D0%BA%20%D0%B0%D0%B4%D1%80%D0%B5%D1%81%D0%BE%D0%B2.user.js
 // @match        https://wotom.net/*
 // @run-at       document-start
 // @grant        none

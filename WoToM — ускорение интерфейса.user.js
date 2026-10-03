@@ -1,9 +1,13 @@
 // ==UserScript==
 // @name         WoToM — ускорение интерфейса
 // @namespace    Violentmonkey Scripts
-// @version      4.2.1
+// @version      4.2.2
 // @description  Ускоряет списки заявок WoToM, сокращает перерисовки и оживляет загрузку гифками.
 // @author       Svyatoslav Podolskii
+// @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
+// @supportURL   https://github.com/svyatoslavpodolskii/MyVMScripts/issues
+// @updateURL    https://raw.githubusercontent.com/svyatoslavpodolskii/MyVMScripts/main/WoToM%20%E2%80%94%20%D1%83%D1%81%D0%BA%D0%BE%D1%80%D0%B5%D0%BD%D0%B8%D0%B5%20%D0%B8%D0%BD%D1%82%D0%B5%D1%80%D1%84%D0%B5%D0%B9%D1%81%D0%B0.user.js
+// @downloadURL  https://raw.githubusercontent.com/svyatoslavpodolskii/MyVMScripts/main/WoToM%20%E2%80%94%20%D1%83%D1%81%D0%BA%D0%BE%D1%80%D0%B5%D0%BD%D0%B8%D0%B5%20%D0%B8%D0%BD%D1%82%D0%B5%D1%80%D1%84%D0%B5%D0%B9%D1%81%D0%B0.user.js
 // @match        https://wotom.net/*
 // @run-at       document-start
 // @grant        none
