@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WoToM — ускорение интерфейса
 // @namespace    Violentmonkey Scripts
-// @version      4.2.2
-// @description  Ускоряет списки заявок WoToM, сокращает перерисовки и оживляет загрузку гифками.
+// @version      4.2.3
+// @description  Ускоряет списки заявок WoToM. Мемные загрузчики — только для Святослава Подольского и Надии Шихаревой.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
 // @supportURL   https://github.com/svyatoslavpodolskii/MyVMScripts/issues
@@ -60,6 +60,32 @@
   ];
 
   let lastLoaderIndex = -1;
+
+  const MEME_OPERATORS = new Set(['Святослав Подольский', 'Надия Шихарева']);
+  const originalLoaders = new WeakMap();
+  let lastOperatorName = '';
+
+  function getOperatorName() {
+    return (document.getElementById('flowUName')?.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function restoreLoader(img) {
+    const original = originalLoaders.get(img);
+    if (!original) return;
+
+    originalLoaders.delete(img);
+    delete img.dataset.wotomOriginalLoader;
+    delete img.dataset.wotomRandomLoader;
+
+    if (isOurLoader(img.getAttribute('src'))) {
+      img.setAttribute('src', original.src);
+    }
+    for (const property of ['width', 'height', 'objectFit']) {
+      if (img.style[property] === original.applied[property]) {
+        img.style[property] = original.style[property];
+      }
+    }
+  }
 
   function randomLoader() {
     if (LOADERS.length === 1) {
@@ -956,6 +982,12 @@
       return;
     }
 
+    // Пока имя не появилось, дискотека закрыта.
+    if (!MEME_OPERATORS.has(getOperatorName())) {
+      restoreLoader(img);
+      return;
+    }
+
     const src = img.getAttribute('src');
 
     if (!src || isOurLoader(src)) {
@@ -971,6 +1003,17 @@
     if (shouldSkipHiddenLoader(img, type)) {
       return;
     }
+
+    const previous = originalLoaders.get(img);
+    const original = {
+      src,
+      style: previous?.style || {
+        width: img.style.width,
+        height: img.style.height,
+        objectFit: img.style.objectFit
+      },
+      applied: {}
+    };
 
     img.dataset.wotomOriginalLoader = type;
 
@@ -997,11 +1040,22 @@
       img.decoding = 'async';
     } catch (_) {}
 
+    for (const property of ['width', 'height', 'objectFit']) {
+      original.applied[property] = img.style[property];
+    }
+    originalLoaders.set(img, original);
+
     img.setAttribute('src', randomLoader());
   }
 
   function scanLoaders(root) {
     if (!root) {
+      return;
+    }
+
+    if (!MEME_OPERATORS.has(getOperatorName())) {
+      if (root instanceof HTMLImageElement) restoreLoader(root);
+      root.querySelectorAll?.('img[data-wotom-random-loader="1"]').forEach(restoreLoader);
       return;
     }
 
@@ -1033,6 +1087,16 @@
     }
 
     const observer = new MutationObserver((mutations) => {
+      const operatorName = getOperatorName();
+      if (operatorName !== lastOperatorName) {
+        lastOperatorName = operatorName;
+        if (MEME_OPERATORS.has(operatorName)) {
+          scanLoaders(document);
+        } else {
+          document.querySelectorAll('img[data-wotom-random-loader="1"]').forEach(restoreLoader);
+        }
+      }
+
       for (const mutation of mutations) {
         if (mutation.type === 'attributes') {
           if (mutation.target instanceof HTMLImageElement) {
@@ -1042,7 +1106,7 @@
           continue;
         }
 
-        for (const node of mutation.addedNodes) {
+        for (const node of mutation.addedNodes || []) {
           if (node.nodeType !== Node.ELEMENT_NODE) {
             continue;
           }
@@ -1058,6 +1122,8 @@
       subtree: true,
 
       childList: true,
+
+      characterData: true,
 
       attributes: true,
 
