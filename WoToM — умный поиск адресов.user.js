@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WoToM — умный поиск адресов
 // @namespace    uplink.kz
-// @version      1.8.13
+// @version      1.8.14
 // @description  Находит адреса в свободном формате, кэширует справочники и открывает дома и абонентов.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -42,14 +42,12 @@
   let warming = false;
   let quickSearchRunning = false;
 
-  // Контекст поиска живёт до F5. Новый день — чистый лист.
   const searchContext = {
     queryRaw: '',
     queryNorm: '',
     results: [],
     index: -1,
 
-    // origin: all — быстрый поиск, native — штатный, пустая строка — обычная карточка.
     origin: '',
 
     sessionActive: false
@@ -227,7 +225,6 @@
         : null;
     }
 
-    // «Уральская45г149» тоже адрес. Сначала проверяем алиасы.
     for (const entry of streetAliasEntries(city)) {
       const target = streets.find(
         (item) =>
@@ -400,7 +397,6 @@
     const cached = await dbGet(key);
 
     if (cached?.items?.length && !options.forceFresh) {
-      // Кэш отдаём сразу, обновление запускаем в фоне с ограничением частоты.
       if (options.backgroundRefresh !== false) {
         scheduleRevalidate(city, street, building);
       }
@@ -500,13 +496,34 @@
       .trim();
 
     const result = {
+      city: '',
       street: '',
       apartment: '',
       building: '',
       cleaned: source
     };
 
-    // «Абая 10 25»: два последних слова — дом и квартира. В улице должна быть буква.
+    // «Костанай 6 40 504»: город отдельно, дальше район, дом и квартира.
+    const cityNumericTriplet = source.match(
+      /^\s*([а-яА-ЯёЁa-zA-Z][а-яА-ЯёЁa-zA-Z\s.-]*?)\s+([0-9]+)\s+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)\s+([0-9а-яА-ЯёЁa-zA-Z/_()-]+)\s*$/u
+    );
+
+    if (cityNumericTriplet) {
+      const possibleCity = cityNumericTriplet[1].trim();
+
+      result.city = possibleCity;
+
+      result.street = cityNumericTriplet[2].trim();
+
+      result.building = cityNumericTriplet[3].replace(/\s+/g, '');
+
+      result.apartment = cityNumericTriplet[4].trim();
+
+      result.cleaned = result.street;
+
+      return result;
+    }
+
     const namedSpaceTriplet = source.match(
       /^\s*(.*[а-яА-ЯёЁa-zA-Z].*?)\s+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?\s+([0-9а-яА-ЯёЁa-zA-Z/_()-]+)\s*$/u
     );
@@ -523,7 +540,6 @@
       return result;
     }
 
-    // «Уральская 45Г,149»: запятая заменяет «кв».
     const namedTriplet = source.match(
       /^\s*(.+?)\s+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?\s*[,;]\s*([0-9а-яА-ЯёЁa-zA-Z/_()-]+)\s*$/u
     );
@@ -540,7 +556,6 @@
       return result;
     }
 
-    // Короткие адреса: 1-16-23, 3,1,26, 6/40/504, 4 2 73.
     const tripletPatterns = [
       /^\s*([0-9]+[а-яА-ЯёЁa-zA-Z]?)\s*[-,;:]\s*([0-9]+(?:[/_][0-9]+)?[а-яА-ЯёЁa-zA-Z]?)\s*[-,;:]\s*([0-9]+[а-яА-ЯёЁa-zA-Z/_()-]*)\s*$/u,
       /^\s*([0-9]+[а-яА-ЯёЁa-zA-Z]?)\s+([0-9]+(?:[/_][0-9]+)?[а-яА-ЯёЁa-zA-Z]?)\s+([0-9]+[а-яА-ЯёЁa-zA-Z/_()-]*)\s*$/u
@@ -559,7 +574,6 @@
       }
     }
 
-    // Явное «кв» отделяет квартиру даже в «Береке79кв194».
     const apartmentMarker =
       /(?:квартира|[кk][вv])\.?\s*[:#№-]?\s*([0-9а-яА-ЯёЁa-zA-Z/_()-]+)\s*$/iu;
 
@@ -581,7 +595,6 @@
       source = source.slice(0, buildingMatch.index).trim();
     }
 
-    // После удаления «кв 30» дом ищем в конце оставшейся строки.
     if (result.apartment && !result.building) {
       const streetBuilding = source.match(
         /^\s*(.+?)\s+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?\s*$/u
@@ -695,7 +708,6 @@
     let building = '';
     let afterBuilding = '';
 
-    // Написали «дом 79» — не отправляем человека в 79/1.
     if (hints.building) {
       const targetBuilding = normalizeBuildingToken(hints.building);
 
@@ -713,7 +725,6 @@
 
       afterBuilding = afterStreet;
     } else {
-      // Перед явным «кв» сначала ищем полное совпадение дома, затем префикс.
       let buildingMatch = null;
 
       if (hints.apartment) {
@@ -738,7 +749,6 @@
         buildingMatch = bestPrefix(buildings, afterStreet);
       }
 
-      // При явной квартире дом должен совпасть точно: 10 и 10_1 — разные адреса.
       if (!buildingMatch) {
         return [];
       }
@@ -810,9 +820,6 @@
       return [];
     }
 
-    // Без города в запросе ищем везде; выбор в штатной форме нас не ограничивает.
-
-    // Сначала локальный индекс улиц, без очереди запросов по городам.
     const localMatches = [];
 
     for (const city of cities) {
@@ -892,18 +899,38 @@
     let explicitCity = null;
     let bestCityLen = -1;
 
-    for (const city of cities) {
-      const cc = compact(city.value);
-      if (cc && qCompact.startsWith(cc) && cc.length > bestCityLen) {
-        explicitCity = city.value;
-        bestCityLen = cc.length;
+    // Город уже разобран — сверяем и внутреннее значение, и подпись в списке.
+    if (hints.city) {
+      const wantedCity = compact(hints.city);
+
+      const matchedCity = cities.find(
+        (city) => compact(city.value) === wantedCity || compact(city.text) === wantedCity
+      );
+
+      if (matchedCity) {
+        explicitCity = matchedCity.value;
+      }
+    }
+
+    if (!explicitCity) {
+      for (const city of cities) {
+        const cc = compact(city.value);
+
+        if (cc && qCompact.startsWith(cc) && cc.length > bestCityLen) {
+          explicitCity = city.value;
+
+          bestCityLen = cc.length;
+        }
       }
     }
 
     let cityCandidates;
 
     if (explicitCity) {
-      qCompact = qCompact.slice(bestCityLen);
+      // Город срезаем один раз. Району тоже нужно остаться в адресе.
+      if (!hints.city && bestCityLen > 0) {
+        qCompact = qCompact.slice(bestCityLen);
+      }
 
       cityCandidates = [explicitCity];
     } else {
@@ -930,7 +957,6 @@
 
     const results = perCity.flat();
 
-    // Убираем дубли, но сохраняем разные договоры одной квартиры.
     const unique = [];
     const seen = new Set();
 
@@ -1015,7 +1041,6 @@
   async function materializeAddressBranch(item) {
     await ensureSearchWindow();
 
-    // Получаем все уровни заранее и показываем их за один кадр.
     const [streets, buildings, rooms] = await Promise.all([
       item.street
         ? getLevel(item.city, '', '', {
@@ -1175,7 +1200,6 @@
   let nativeResultIndex = -1;
   let nativeSearchRunning = false;
 
-  // При переборе договоров одной квартиры уже загруженную ветку не трогаем.
   let nativeLoadedCity = '';
   let nativeLoadedStreet = '';
   let nativeLoadedBuilding = '';
@@ -1213,7 +1237,6 @@
 
     const options = Array.from(select.options);
 
-    // Ключ — action id: номер квартиры у разных договоров может совпасть.
     if (item.actionId) {
       const byAction = options.findIndex((option) => optionActionId(option) === item.actionId);
 
@@ -1242,7 +1265,6 @@
       }
     }
 
-    // Индекс из ответа годится, только если option на месте и value совпадает.
     if (
       Number.isInteger(item.sourceOptionIndex) &&
       item.sourceOptionIndex >= 0 &&
@@ -1267,7 +1289,6 @@
       return false;
     }
 
-    // Выбираем по selectedIndex: у нескольких договоров бывает один value.
     select.selectedIndex = index;
 
     const option = select.options[index];
@@ -1403,7 +1424,6 @@
   function extractContractNumber(item) {
     const raw = String(item?.rawText || '');
 
-    // Номер договора берём из штатных скобок: «30 [142899]».
     const match = raw.match(/\[([^\]]+)\]/);
 
     return match ? match[1].trim() : '';
@@ -1465,7 +1485,6 @@
     resultBox.innerHTML = '';
 
     items.forEach((item, itemIndex) => {
-      // Внутри есть кнопки, поэтому обёртка — div. Кнопка в кнопке ломает DOM.
       const row = document.createElement('div');
 
       row.className = 'wsa-result';
@@ -1657,8 +1676,6 @@
         }
 
         renderResults(results);
-
-        // Даже точное совпадение открывает человек. Телепорт — только по кнопке.
       } catch (error) {
         console.error('[WoToM Address] search failed', error);
         setStatus('Ошибка поиска');
@@ -2225,7 +2242,6 @@
       event.preventDefault();
       event.stopPropagation();
 
-      // Нужна обёртка: иначе MouseEvent попадёт в preserveContext вместо флага.
       closeModal(false);
     });
 
@@ -2433,7 +2449,6 @@
       }
     }
 
-    // Автопереход: город → улица → дом → квартиры. Карточку автоматически не открываем.
     if (q && visible.length === 1 && select.id !== 'supGeoRoom_select') {
       const option = visible[0];
 
@@ -2443,7 +2458,6 @@
         select.selectedIndex = index;
       }
 
-      // Штатный onclick загружает следующий уровень; даём WoToM сделать своё дело.
       try {
         if (typeof window.supCallOptionOnClick === 'function') {
           window.supCallOptionOnClick(select);
@@ -2484,7 +2498,6 @@
       true
     );
 
-    // WoToM использует table-cell; выравнивание задаём самой колонке.
     if (select.parentElement) {
       select.parentElement.style.verticalAlign = 'top';
       select.parentElement.style.overflow = 'hidden';
@@ -2505,7 +2518,6 @@
 
       const count = filterSelect(select, allowAuto ? input.value : '');
 
-      // filterSelect уже выбирает результат. Ключ защищает от повторного автоклика.
       const key = `${q}|${count}|${select.value}`;
 
       if (allowAuto) {
@@ -2558,8 +2570,6 @@
         }
       }
     });
-
-    // Без observer: WoToM заменит option, а следующее поле ещё пустое.
   }
 
   function installNativeFilters() {
@@ -2609,7 +2619,6 @@
   let searchUIPatched = false;
   let loadSearchDNumPatched = false;
 
-  // Флаг относится только к ближайшему loadSearchDNum из быстрого поиска.
   let openingFromWSA = false;
 
   let searchLifetimeObserver = null;
@@ -2636,7 +2645,6 @@
       return;
     }
 
-    // Удаление userSearchContainer завершает сессию. Открытие карточки — ещё нет.
     searchLifetimeObserver = new MutationObserver(() => {
       if (document.contains(container)) {
         return;
@@ -2761,7 +2769,6 @@
     const original = window.loadSearchDNum;
 
     window.loadSearchDNum = async function (...args) {
-      // Карточку открыли вне быстрого поиска — старый origin больше не подходит.
       if (!openingFromWSA) {
         searchContext.origin = '';
         searchContext.sessionActive = false;
@@ -2804,7 +2811,6 @@
     ensureStyles();
     installToolbarButton();
 
-    // Функции WoToM могут появиться после DOMContentLoaded. Ждём, патчим, убираем таймер.
     if (!patchWoToMFunctions()) {
       let attempts = 0;
 
