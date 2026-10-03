@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WoToM — умный поиск адресов
 // @namespace    uplink.kz
-// @version      1.8.14
+// @version      1.9.0
 // @description  Находит адреса в свободном формате, кэширует справочники и открывает дома и абонентов.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -250,11 +250,142 @@
     return bestPrefix(streets, addressCompact);
   }
 
-  function stripLeadingCityLabel(text) {
-    return String(text || '')
-      .trim()
-      .replace(/^(?:г(?:ород)?\.?)\s*/i, '');
+  function escapeRegExp(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
+
+  function cleanAddressSeparators(value) {
+    return String(value || '')
+      .replace(/\u00A0/g, ' ')
+      .replace(/^[\s,;:]+|[\s,;:]+$/g, '')
+      .replace(/\s*([,;:])\s*/g, '$1 ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function extractCityFromQuery(rawQuery, cities) {
+    const original = String(rawQuery || '')
+      .replace(/\u00A0/g, ' ')
+      .trim();
+
+    if (!original || !cities?.length) {
+      return {
+        city: '',
+        query: cleanAddressSeparators(original)
+      };
+    }
+
+    const candidates = [];
+
+    for (const city of cities) {
+      for (const name of [city.value, city.text]) {
+        const value = String(name || '').trim();
+
+        if (!value) continue;
+
+        const key = norm(value);
+
+        if (
+          candidates.some(
+            (item) =>
+              item.key === key &&
+              item.city === city.value
+          )
+        ) {
+          continue;
+        }
+
+        candidates.push({
+          city: city.value,
+          name: value,
+          key
+        });
+      }
+    }
+
+    /*
+     * Длинные названия проверяем первыми, чтобы условный
+     * "Костанай Северный" не проиграл "Костанай".
+     */
+    candidates.sort(
+      (a, b) =>
+        b.name.length - a.name.length
+    );
+
+    for (const candidate of candidates) {
+      const escaped = escapeRegExp(candidate.name);
+
+      /*
+       * 1) Город в начале:
+       *    Костанай, Абая 10 20
+       *    г.Костанай Абая 10 20
+       *    Лисаковск1дом16кв23
+       *
+       * После города разрешаем цифру без пробела специально
+       * для старых компактных форматов.
+       */
+      const startPattern = new RegExp(
+        `^(?:г(?:ород)?\\.?\\s*)?(${escaped})(?=$|[\\s,;:]|\\d)`,
+        'iu'
+      );
+
+      let match = original.match(startPattern);
+
+      if (match) {
+        return {
+          city: candidate.city,
+          query: cleanAddressSeparators(
+            original.slice(match[0].length)
+          )
+        };
+      }
+
+      /*
+       * 2) Город в конце или середине, отделённый обычным
+       *    разделителем:
+       *    Абая 10 20, Костанай
+       *    Абая 10 20 Костанай
+       *
+       * Предшествующий разделитель оставляем снаружи match,
+       * затем cleanAddressSeparators аккуратно его убирает.
+       */
+      const anywherePattern = new RegExp(
+        `(^|[\\s,;:])(?:г(?:ород)?\\.?\\s*)?(${escaped})(?=$|[\\s,;:])`,
+        'iu'
+      );
+
+      match = original.match(anywherePattern);
+
+      if (match) {
+        const cityStart =
+          match.index +
+          match[1].length;
+
+        const cityEnd =
+          match.index +
+          match[0].length;
+
+        return {
+          city: candidate.city,
+          query: cleanAddressSeparators(
+            original.slice(0, cityStart) +
+            original.slice(cityEnd)
+          )
+        };
+      }
+    }
+
+    return {
+      city: '',
+      query: cleanAddressSeparators(
+        original.replace(
+          /^(?:г(?:ород)?\.?)\s*/iu,
+          ''
+        )
+      )
+    };
+  }
+
 
   function escapeHTML(value) {
     return String(value)
@@ -491,130 +622,248 @@
   }
 
   function parseAddressHints(raw) {
-    let source = String(raw || '')
-      .replace(/\u00A0/g, ' ')
-      .trim();
+    let source = cleanAddressSeparators(raw);
 
     const result = {
-      city: '',
       street: '',
       apartment: '',
       building: '',
       cleaned: source
     };
 
-    // «Костанай 6 40 504»: город отдельно, дальше район, дом и квартира.
-    const cityNumericTriplet = source.match(
-      /^\s*([а-яА-ЯёЁa-zA-Z][а-яА-ЯёЁa-zA-Z\s.-]*?)\s+([0-9]+)\s+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)\s+([0-9а-яА-ЯёЁa-zA-Z/_()-]+)\s*$/u
-    );
-
-    if (cityNumericTriplet) {
-      const possibleCity = cityNumericTriplet[1].trim();
-
-      result.city = possibleCity;
-
-      result.street = cityNumericTriplet[2].trim();
-
-      result.building = cityNumericTriplet[3].replace(/\s+/g, '');
-
-      result.apartment = cityNumericTriplet[4].trim();
-
-      result.cleaned = result.street;
-
+    if (!source) {
       return result;
     }
 
-    const namedSpaceTriplet = source.match(
-      /^\s*(.*[а-яА-ЯёЁa-zA-Z].*?)\s+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?\s+([0-9а-яА-ЯёЁa-zA-Z/_()-]+)\s*$/u
+    /*
+     * Чистый цифровой slash-triplet:
+     * 6/40/504 = улица 6, дом 40, квартира 504.
+     *
+     * Это правило специально требует, чтобы ВСЯ строка была
+     * тремя цифровыми частями. Поэтому дом 28/3 в строке
+     * "Кобланды батыра 28/3 30" не развалится на 28 и 3.
+     */
+    const pureSlashTriplet = source.match(
+      /^\s*([0-9]+[а-яА-ЯёЁa-zA-Z]?)\s*\/\s*([0-9]+[а-яА-ЯёЁa-zA-Z]?)\s*\/\s*([0-9]+[а-яА-ЯёЁa-zA-Z_-]*)\s*$/u
     );
 
-    if (namedSpaceTriplet) {
-      result.street = namedSpaceTriplet[1].trim();
-
-      result.building = namedSpaceTriplet[2].replace(/\s+/g, '');
-
-      result.apartment = namedSpaceTriplet[3].trim();
-
+    if (pureSlashTriplet) {
+      result.street = pureSlashTriplet[1];
+      result.building = pureSlashTriplet[2];
+      result.apartment = pureSlashTriplet[3];
       result.cleaned = result.street;
-
       return result;
     }
 
-    const namedTriplet = source.match(
-      /^\s*(.+?)\s+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?\s*[,;]\s*([0-9а-яА-ЯёЁa-zA-Z/_()-]+)\s*$/u
-    );
-
-    if (namedTriplet) {
-      result.street = namedTriplet[1].trim();
-
-      result.building = namedTriplet[2].replace(/\s+/g, '');
-
-      result.apartment = namedTriplet[3].trim();
-
-      result.cleaned = result.street;
-
-      return result;
-    }
-
-    const tripletPatterns = [
+    /*
+     * Чистые цифровые варианты:
+     * 1-16-23
+     * 3,1,26
+     * 1 8 51
+     */
+    const numericTripletPatterns = [
       /^\s*([0-9]+[а-яА-ЯёЁa-zA-Z]?)\s*[-,;:]\s*([0-9]+(?:[/_][0-9]+)?[а-яА-ЯёЁa-zA-Z]?)\s*[-,;:]\s*([0-9]+[а-яА-ЯёЁa-zA-Z/_()-]*)\s*$/u,
       /^\s*([0-9]+[а-яА-ЯёЁa-zA-Z]?)\s+([0-9]+(?:[/_][0-9]+)?[а-яА-ЯёЁa-zA-Z]?)\s+([0-9]+[а-яА-ЯёЁa-zA-Z/_()-]*)\s*$/u
     ];
 
-    for (const pattern of tripletPatterns) {
-      const m = source.match(pattern);
+    for (const pattern of numericTripletPatterns) {
+      const match = source.match(pattern);
 
-      if (m) {
-        result.street = m[1];
-        result.building = m[2];
-        result.apartment = m[3];
-        result.cleaned = m[1];
-
+      if (match) {
+        result.street = match[1];
+        result.building = match[2];
+        result.apartment = match[3];
+        result.cleaned = result.street;
         return result;
       }
     }
 
+    /*
+     * Квартира с явным маркером:
+     * Береке 79 кв. 194
+     * Береке79кв194
+     * Кобыланды Батыра 50 кв 45
+     */
     const apartmentMarker =
       /(?:квартира|[кk][вv])\.?\s*[:#№-]?\s*([0-9а-яА-ЯёЁa-zA-Z/_()-]+)\s*$/iu;
 
-    const apartmentMatch = source.match(apartmentMarker);
+    const apartmentMatch =
+      source.match(apartmentMarker);
 
     if (apartmentMatch) {
-      result.apartment = apartmentMatch[1];
+      result.apartment =
+        apartmentMatch[1].trim();
 
-      source = source.slice(0, apartmentMatch.index).trim();
+      source =
+        source
+          .slice(
+            0,
+            apartmentMatch.index
+          )
+          .trim()
+          .replace(/[\s,;:]+$/g, '');
     }
 
-    const buildingMarker = /(?:дом|[дd])\.?\s*[:#№-]?\s*([0-9а-яА-ЯёЁa-zA-Z/_-]+)\s*$/iu;
+    /*
+     * Дом с явным маркером:
+     * 1 дом 16 кв 23
+     * 1дом16кв23
+     */
+    const buildingMarker =
+      /(?:дом|[дd])\.?\s*[:#№-]?\s*([0-9]+(?:[/_][0-9]+)?[а-яА-ЯёЁa-zA-Z]?)\s*$/iu;
 
-    const buildingMatch = source.match(buildingMarker);
+    const buildingMatch =
+      source.match(buildingMarker);
 
     if (buildingMatch) {
-      result.building = buildingMatch[1];
+      result.building =
+        buildingMatch[1]
+          .replace(/\s+/g, '');
 
-      source = source.slice(0, buildingMatch.index).trim();
+      source =
+        source
+          .slice(
+            0,
+            buildingMatch.index
+          )
+          .trim()
+          .replace(/[\s,;:]+$/g, '');
     }
 
-    if (result.apartment && !result.building) {
-      const streetBuilding = source.match(
-        /^\s*(.+?)\s+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?\s*$/u
-      );
+    /*
+     * Если квартира уже известна, хвост source должен быть
+     * "улица + дом". Поддерживаем как обычный пробел, так и
+     * компактный Береке79.
+     */
+    if (
+      result.apartment &&
+      !result.building
+    ) {
+      const spacedStreetBuilding =
+        source.match(
+          /^\s*(.+?)\s+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?\s*$/u
+        );
 
-      if (streetBuilding) {
-        result.street = streetBuilding[1].trim();
+      if (spacedStreetBuilding) {
+        result.street =
+          spacedStreetBuilding[1]
+            .trim()
+            .replace(/[\s,;:]+$/g, '');
 
-        result.building = streetBuilding[2].replace(/\s+/g, '');
+        result.building =
+          spacedStreetBuilding[2]
+            .replace(/\s+/g, '');
 
-        result.cleaned = result.street;
+        result.cleaned =
+          result.street;
+
+        return result;
+      }
+
+      const compactStreetBuilding =
+        source.match(
+          /^\s*(.*[а-яА-ЯёЁa-zA-Z])\s*([0-9]+(?:[/_][0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?\s*$/u
+        );
+
+      if (compactStreetBuilding) {
+        result.street =
+          compactStreetBuilding[1]
+            .trim()
+            .replace(/[\s,;:]+$/g, '');
+
+        result.building =
+          compactStreetBuilding[2]
+            .replace(/\s+/g, '');
+
+        result.cleaned =
+          result.street;
 
         return result;
       }
     }
 
-    result.cleaned = source;
+    /*
+     * Если и дом, и квартира пришли через маркеры,
+     * всё оставшееся = улица.
+     */
+    if (
+      result.apartment &&
+      result.building
+    ) {
+      result.street =
+        source.trim();
+
+      result.cleaned =
+        result.street;
+
+      return result;
+    }
+
+    /*
+     * Свободные текстовые варианты БЕЗ "кв":
+     *
+     * Уральская 45Г,149
+     * Уральская 45г 0
+     * Кобланды батыра 28/3 30
+     * Береке, 79, 194
+     *
+     * Две последние части всегда дом + квартира.
+     */
+    const namedTriplet =
+      source.match(
+        /^\s*(.*[а-яА-ЯёЁa-zA-Z].*?)[\s,;]+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?[\s,;]+([0-9а-яА-ЯёЁa-zA-Z/_()-]+)\s*$/u
+      );
+
+    if (namedTriplet) {
+      result.street =
+        namedTriplet[1]
+          .trim()
+          .replace(/[\s,;:]+$/g, '');
+
+      result.building =
+        namedTriplet[2]
+          .replace(/\s+/g, '');
+
+      result.apartment =
+        namedTriplet[3].trim();
+
+      result.cleaned =
+        result.street;
+
+      return result;
+    }
+
+    /*
+     * Только улица + дом, без квартиры.
+     * Нужен в том числе для показа самого дома.
+     */
+    const streetBuilding =
+      source.match(
+        /^\s*(.*[а-яА-ЯёЁa-zA-Z].*?)[\s,;]+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?\s*$/u
+      );
+
+    if (streetBuilding) {
+      result.street =
+        streetBuilding[1]
+          .trim()
+          .replace(/[\s,;:]+$/g, '');
+
+      result.building =
+        streetBuilding[2]
+          .replace(/\s+/g, '');
+
+      result.cleaned =
+        result.street;
+
+      return result;
+    }
+
+    result.cleaned =
+      source;
 
     return result;
   }
+
 
   function bestPrefix(items, remainder) {
     let best = null;
@@ -882,88 +1131,98 @@
   }
 
   async function resolveAddress(rawQuery, progress) {
-    const hints = parseAddressHints(stripLeadingCityLabel(rawQuery));
-
-    const raw = hints.cleaned;
-
-    let qCompact = compact(raw);
-
-    if (!qCompact) return [];
-
+    /*
+     * Сначала получаем реальные города WoToM и только после этого
+     * отделяем город от адреса. Город может стоять в начале,
+     * конце или середине и может быть записан как "г.Костанай".
+     */
     const cities = await getLevel('', '', '', {
       backgroundRefresh: true
     });
 
     if (!cities.length) return [];
 
-    let explicitCity = null;
-    let bestCityLen = -1;
-
-    // Город уже разобран — сверяем и внутреннее значение, и подпись в списке.
-    if (hints.city) {
-      const wantedCity = compact(hints.city);
-
-      const matchedCity = cities.find(
-        (city) => compact(city.value) === wantedCity || compact(city.text) === wantedCity
+    const extracted =
+      extractCityFromQuery(
+        rawQuery,
+        cities
       );
 
-      if (matchedCity) {
-        explicitCity = matchedCity.value;
-      }
-    }
+    const hints =
+      parseAddressHints(
+        extracted.query
+      );
 
-    if (!explicitCity) {
-      for (const city of cities) {
-        const cc = compact(city.value);
+    const raw =
+      hints.cleaned;
 
-        if (cc && qCompact.startsWith(cc) && cc.length > bestCityLen) {
-          explicitCity = city.value;
+    const qCompact =
+      compact(raw);
 
-          bestCityLen = cc.length;
-        }
-      }
-    }
+    if (!qCompact) return [];
 
     let cityCandidates;
 
-    if (explicitCity) {
-      // Город срезаем один раз. Району тоже нужно остаться в адресе.
-      if (!hints.city && bestCityLen > 0) {
-        qCompact = qCompact.slice(bestCityLen);
-      }
-
-      cityCandidates = [explicitCity];
+    if (extracted.city) {
+      cityCandidates =
+        [extracted.city];
     } else {
-      cityCandidates = await getCandidateCitiesForAddress(cities, qCompact, hints, progress);
+      cityCandidates =
+        await getCandidateCitiesForAddress(
+          cities,
+          qCompact,
+          hints,
+          progress
+        );
     }
 
     if (!cityCandidates.length) {
       return [];
     }
 
-    const perCity = await Promise.all(
-      cityCandidates.map(async (city) => {
-        progress?.(`Проверяю ${city}...`);
+    const perCity =
+      await Promise.all(
+        cityCandidates.map(
+          async (city) => {
+            progress?.(
+              `Проверяю ${city}...`
+            );
 
-        try {
-          return await resolveInCity(city, qCompact, null, hints);
-        } catch (error) {
-          log('resolve city failed', city, error);
+            try {
+              return await resolveInCity(
+                city,
+                qCompact,
+                null,
+                hints
+              );
+            } catch (error) {
+              log(
+                'resolve city failed',
+                city,
+                error
+              );
 
-          return [];
-        }
-      })
-    );
+              return [];
+            }
+          }
+        )
+      );
 
-    const results = perCity.flat();
+    const results =
+      perCity.flat();
 
     const unique = [];
     const seen = new Set();
 
     for (const item of results) {
-      const key = [item.kind, item.city, item.street, item.building, item.room, item.actionId].join(
-        '|'
-      );
+      const key = [
+        item.kind,
+        item.city,
+        item.street,
+        item.building,
+        item.room,
+        item.actionId
+      ].join('|');
 
       if (!seen.has(key)) {
         seen.add(key);
@@ -973,6 +1232,7 @@
 
     return unique;
   }
+
 
   function optionFromCachedItem(item) {
     const option = document.createElement('option');
@@ -2854,3 +3114,4 @@
     boot();
   }
 })();
+
