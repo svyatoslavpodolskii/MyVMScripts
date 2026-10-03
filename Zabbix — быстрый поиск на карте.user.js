@@ -1,15 +1,14 @@
 // ==UserScript==
 // @name         Zabbix — быстрый поиск на карте
 // @namespace    uplink.kz
-// @version      4.0.3
+// @version      4.0.4
 // @description  Локальный поиск по узлам текущей группы iMap с сохранением снимка группы.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
 // @supportURL   https://github.com/svyatoslavpodolskii/MyVMScripts/issues
 // @updateURL    https://raw.githubusercontent.com/svyatoslavpodolskii/MyVMScripts/main/Zabbix%20%E2%80%94%20%D0%B1%D1%8B%D1%81%D1%82%D1%80%D1%8B%D0%B9%20%D0%BF%D0%BE%D0%B8%D1%81%D0%BA%20%D0%BD%D0%B0%20%D0%BA%D0%B0%D1%80%D1%82%D0%B5.user.js
 // @downloadURL  https://raw.githubusercontent.com/svyatoslavpodolskii/MyVMScripts/main/Zabbix%20%E2%80%94%20%D0%B1%D1%8B%D1%81%D1%82%D1%80%D1%8B%D0%B9%20%D0%BF%D0%BE%D0%B8%D1%81%D0%BA%20%D0%BD%D0%B0%20%D0%BA%D0%B0%D1%80%D1%82%D0%B5.user.js
-// @match        http://109.248.236.92/zabbix/imap.php*
-// @exclude      /^(?!http:\/\/109\.248\.236\.92:18002\/zabbix\/imap\.php(?:[?#]|$)).*/
+// @include      http://109.248.236.92:18002/zabbix/imap.php*
 // @run-at       document-start
 // @noframes
 // @grant        none
