@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WoToM — умный поиск адресов
 // @namespace    uplink.kz
-// @version      1.9.0
+// @version      1.9.1
 // @description  Находит адреса в свободном формате, кэширует справочники и открывает дома и абонентов.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -624,6 +624,12 @@
   function parseAddressHints(raw) {
     let source = cleanAddressSeparators(raw);
 
+    // «4мкр 16 дом 24 КВ» — тот же адрес, только подписи пошли гулять.
+    source = source
+      .replace(/^(\d+[а-яёa-z]?)\s*(?:микрорайон|мкр|мкр-н|мкрн|м-н)\.?(?=[\s,;:]|$)/iu, '$1')
+      .replace(/^(?:микрорайон|мкр-н|мкрн|мкр|м-н)\.?\s*(\d+[а-яёa-z]?)(?=[\s,;:]|$)/iu, '$1')
+      .replace(/(^|[\s,;:])([0-9]+[а-яёa-z/_()-]*)\s+(?:квартира|[кk][вv])\.?\s*$/iu, '$1кв $2');
+
     const result = {
       street: '',
       apartment: '',
@@ -709,6 +715,11 @@
      * 1 дом 16 кв 23
      * 1дом16кв23
      */
+    source = source.replace(
+      /(^|[\s,;:])([0-9]+(?:[/_][0-9]+)?[а-яёa-z]?)\s+(?:дом|[дd])\.?\s*$/iu,
+      '$1дом $2'
+    );
+
     const buildingMarker =
       /(?:дом|[дd])\.?\s*[:#№-]?\s*([0-9]+(?:[/_][0-9]+)?[а-яА-ЯёЁa-zA-Z]?)\s*$/iu;
 
@@ -3114,4 +3125,3 @@
     boot();
   }
 })();
-
