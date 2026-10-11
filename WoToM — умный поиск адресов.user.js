@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WoToM — умный поиск адресов
 // @namespace    uplink.kz
-// @version      1.10.1
+// @version      1.10.2
 // @description  Находит адреса в свободном формате, кэширует справочники и открывает дома и абонентов.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -355,6 +355,10 @@
           query: cleanAddressSeparators(original.slice(match[0].length))
         };
       }
+    }
+
+    for (const candidate of candidates) {
+      const escaped = escapeRegExp(candidate.name);
 
       /*
        * 2) Город в конце или середине, отделённый обычным
@@ -370,7 +374,7 @@
         'iu'
       );
 
-      match = original.match(anywherePattern);
+      const match = original.match(anywherePattern);
 
       if (match) {
         const cityStart = match.index + match[1].length;
@@ -1123,6 +1127,15 @@
     if (!cities.length) return [];
 
     const extracted = extractCityFromQuery(rawQuery, cities);
+
+    const results = await resolveAddressInterpretation(extracted, cities, progress);
+    if (results.length || !extracted.city) return results;
+
+    // Название города бывает и улицей. Даём полному адресу второй шанс.
+    return resolveAddressInterpretation({ city: '', query: rawQuery }, cities, progress);
+  }
+
+  async function resolveAddressInterpretation(extracted, cities, progress) {
 
     const hints = parseAddressHints(extracted.query);
 
