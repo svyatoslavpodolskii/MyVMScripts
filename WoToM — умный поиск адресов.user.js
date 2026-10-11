@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WoToM — умный поиск адресов
 // @namespace    uplink.kz
-// @version      1.10.0
+// @version      1.10.1
 // @description  Находит адреса в свободном формате, кэширует справочники и открывает дома и абонентов.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -184,7 +184,15 @@
     return compact(parts.join(' '));
   }
 
-  function optionMatchesFilter(select, option, query) {
+  function hasExactRoom(select, query) {
+    if (select?.id !== 'supGeoRoom_select') return false;
+    const search = norm(query);
+    return !!search && Array.from(select.options).some(
+      (option) => !option.disabled && norm(option.value) === search
+    );
+  }
+
+  function optionMatchesFilter(select, option, query, exactRoom = hasExactRoom(select, query)) {
     const q = compact(query);
 
     if (!q) {
@@ -194,14 +202,10 @@
     if (select?.id === 'supGeoRoom_select') {
       const room = norm(option.value);
       const search = norm(query);
-      // «67» — квартира, а не случайные две цифры в договоре.
-      if (/^\d{1,2}$/.test(search)) return room === search;
-      if (/^\d{3,4}$/.test(search)) return room.startsWith(search);
+      // Есть такая квартира — договоры пока не подмешиваем.
+      if (exactRoom) return room === search;
       const contract = norm((option.textContent || '').match(/\[([^\]]+)\]/)?.[1] || '');
-      const explicitContract = search.match(/^(?:договор|дог\.?|лс|л\/с)\s*[:№#]?\s*(.+)$/);
-      if (explicitContract) return contract.startsWith(norm(explicitContract[1]));
-      if (/^\d{5,}$/.test(search)) return room.startsWith(search) || contract.startsWith(search);
-      return room.startsWith(search) || (contract && contract.startsWith(search));
+      return !!contract && contract.startsWith(search);
     }
 
     if (select?.id === 'supGeoStreet_select') {
@@ -2627,6 +2631,7 @@
   function filterSelect(select, query) {
     const q = compact(query);
     const visible = [];
+    const exactRoom = hasExactRoom(select, query);
 
     for (const option of select.options) {
       if (!q) {
@@ -2639,7 +2644,7 @@
         continue;
       }
 
-      const match = optionMatchesFilter(select, option, query);
+      const match = optionMatchesFilter(select, option, query, exactRoom);
 
       option.hidden = !match;
 
@@ -2728,6 +2733,7 @@
 
     input.addEventListener('input', () => {
       const q = compact(input.value);
+      const exactRoom = hasExactRoom(select, input.value);
 
       const visible = [];
 
@@ -2742,7 +2748,7 @@
           continue;
         }
 
-        const match = optionMatchesFilter(select, option, input.value);
+        const match = optionMatchesFilter(select, option, input.value, exactRoom);
 
         option.hidden = !match;
 
