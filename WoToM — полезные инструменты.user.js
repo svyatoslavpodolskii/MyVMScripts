@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WoToM — полезные инструменты
 // @namespace    uplink-wotom-utilities
-// @version      1.1.1
+// @version      1.1.2
 // @description  Обновление активной карточки договора рядом с кнопкой закрытия окна.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -51,10 +51,23 @@
             /^\s*loadSearchDNum\s*\(\s*(['"])([^'"]+)\1\s*\)\s*;?\s*$/
           )?.[2];
           if (!id || typeof window.loadSearchDNum !== 'function') return;
+          const tabId = dialog.querySelector('.cardTabSelected')?.id;
+          const extraTab = dialog.querySelector('[id="tabCom_selector"]')?.value;
           busy = true;
           button.disabled = true;
           try {
             await window.loadSearchDNum(id);
+            if (!dialog.isConnected) return;
+            const tab = [...dialog.querySelectorAll('.cardTab, .cardTabSelected')]
+              .find(node => node.id === tabId);
+            if (tab && typeof window.ucardSwitchTab === 'function') {
+              window.ucardSwitchTab(tab);
+            }
+            const selector = dialog.querySelector('[id="tabCom_selector"]');
+            if (extraTab && selector && [...selector.options].some(option => option.value === extraTab)) {
+              selector.value = extraTab;
+              selector.dispatchEvent(new Event('change', { bubbles: true }));
+            }
           } catch (error) {
             console.error('[WoToM Utilities] Обновление карточки:', error);
           } finally {
