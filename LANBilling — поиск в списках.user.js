@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LANBilling — поиск в списках
 // @namespace    uplink.extjs.combo.search
-// @version      1.0.3
+// @version      1.0.4
 // @description  Поиск по выпадающим спискам LANBilling с выбором результата с клавиатуры.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -27,6 +27,7 @@
   const ITEM_SELECTOR = '.x-combo-list-item';
 
   const wired = new WeakSet();
+  const cleanups = new WeakMap();
   let scanTimer = null;
 
   function visible(el) {
@@ -115,13 +116,20 @@
   }
 
   function enhance(menu) {
-    if (!menu || wired.has(menu)) return;
+    if (!menu) return;
+
+    if (getItems(menu).length < 5) {
+      cleanups.get(menu)?.();
+      return;
+    }
+    if (wired.has(menu) && !menu.querySelector('.' + SEARCH_CLASS)) cleanups.get(menu)?.();
+    if (wired.has(menu)) return;
 
     const inner = menu.querySelector(INNER_SELECTOR);
     if (!inner) return;
 
     const items = getItems(menu);
-    if (items.length < 3) return;
+    if (items.length < 5) return;
 
     wired.add(menu);
 
@@ -236,7 +244,7 @@
       }
 
       setTimeout(() => {
-        if (visible(menu)) {
+        if (search.isConnected && visible(menu)) {
           input.focus({ preventScroll: true });
         }
       }, 0);
@@ -247,8 +255,18 @@
       attributeFilter: ['style', 'class']
     });
 
+    cleanups.set(menu, () => {
+      menuObserver.disconnect();
+      search.remove();
+      restoreItems(menu);
+      wired.delete(menu);
+      cleanups.delete(menu);
+    });
+
     if (visible(menu)) {
-      setTimeout(() => input.focus({ preventScroll: true }), 0);
+      setTimeout(() => {
+        if (search.isConnected && visible(menu)) input.focus({ preventScroll: true });
+      }, 0);
     }
   }
 

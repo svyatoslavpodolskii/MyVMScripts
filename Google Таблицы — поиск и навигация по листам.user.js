@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Таблицы — поиск и навигация по листам
 // @namespace    uplink.google.sheets.home.search
-// @version      13.0.3
+// @version      13.1.0
 // @description  Поиск по листам таблицы и быстрый переход к листу «Общая информация».
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -46,10 +46,42 @@
     return n ? n.split(' ') : [];
   }
 
-  function smartMatch(label, query) {
-    const hay = normalizeSearch(label);
+  function oneTypo(a, b) {
+    if (Math.abs(a.length - b.length) > 1) return false;
+    if (a === b) return true;
+    let i = 0;
+    while (a[i] === b[i] && i < Math.min(a.length, b.length)) i++;
+    if (a.length === b.length) {
+      return (
+        a.slice(i + 1) === b.slice(i + 1) ||
+        (a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2))
+      );
+    }
+    return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+  }
+
+  function searchScore(label, query, fuzzy = false) {
+    const words = tokens(label);
     const parts = tokens(query);
-    return !parts.length || parts.every((part) => hay.includes(part));
+    let score = 0;
+    for (const part of parts) {
+      const costs = words.map((word) => {
+        if (word === part) return 0;
+        // Числа совпадают целиком: лист 67 не равен листу 167.
+        if (/\d/.test(part) || /\d/.test(word)) return Infinity;
+        if (word.startsWith(part)) return 1;
+        if (fuzzy && part.length >= 5 && oneTypo(part, word)) return 3;
+        return Infinity;
+      });
+      const cost = Math.min(...costs);
+      if (!Number.isFinite(cost)) return Infinity;
+      score += cost;
+    }
+    return score;
+  }
+
+  function smartMatch(label, query) {
+    return Number.isFinite(searchScore(label, query));
   }
 
   function getAllSheetsButton() {
@@ -291,7 +323,15 @@
   function filteredSheets() {
     const popup = ensurePopup();
     const q = popup.querySelector('input').value;
-    return getSheetTabs().filter((x) => smartMatch(x.name, q));
+    const sheets = getSheetTabs();
+    const rank = (fuzzy) =>
+      sheets
+        .map((sheet) => ({ sheet, score: searchScore(sheet.name, q, fuzzy) }))
+        .filter((item) => Number.isFinite(item.score))
+        .sort((a, b) => a.score - b.score)
+        .map((item) => item.sheet);
+    const exact = rank(false);
+    return exact.length ? exact : rank(true);
   }
 
   function markSelected() {

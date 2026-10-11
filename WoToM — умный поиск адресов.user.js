@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WoToM — умный поиск адресов
 // @namespace    uplink.kz
-// @version      1.9.1
+// @version      1.10.0
 // @description  Находит адреса в свободном формате, кэширует справочники и открывает дома и абонентов.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -30,6 +30,8 @@
   };
 
   let dbPromise = null;
+  const levelCache = new Map();
+  const cacheReads = new Map();
 
   // Сначала кэш, свежие данные — следом. Один запрос на уровень.
   const refreshInFlight = new Map();
@@ -99,10 +101,18 @@
   }
 
   function normalizeBuildingToken(value) {
+    return norm(value)
+      .replace(/\([^)]*\)/g, '')
+      .replace(/^(?:дом|д)\.?\s*/u, '')
+      .replace(/\s+/g, '')
+      .replace(/_/g, '/');
+  }
+
+  function streetKey(value) {
     return compact(
-      String(value || '')
-        .replace(/\([^)]*\)/g, '')
-        .trim()
+      norm(value)
+        .replace(/^(?:микрорайон|мкр-н|мкрн|мкр|м-н|улица|ул)(?=[\s.]|\d|$)\.?\s*/u, '')
+        .replace(/(^|[\s\d])(?:микрорайон|мкр-н|мкрн|мкр|м-н|улица|ул)\.?$/u, '$1')
     );
   }
 
@@ -181,6 +191,19 @@
       return true;
     }
 
+    if (select?.id === 'supGeoRoom_select') {
+      const room = norm(option.value);
+      const search = norm(query);
+      // «67» — квартира, а не случайные две цифры в договоре.
+      if (/^\d{1,2}$/.test(search)) return room === search;
+      if (/^\d{3,4}$/.test(search)) return room.startsWith(search);
+      const contract = norm((option.textContent || '').match(/\[([^\]]+)\]/)?.[1] || '');
+      const explicitContract = search.match(/^(?:договор|дог\.?|лс|л\/с)\s*[:№#]?\s*(.+)$/);
+      if (explicitContract) return contract.startsWith(norm(explicitContract[1]));
+      if (/^\d{5,}$/.test(search)) return room.startsWith(search) || contract.startsWith(search);
+      return room.startsWith(search) || (contract && contract.startsWith(search));
+    }
+
     if (select?.id === 'supGeoStreet_select') {
       const city = document.getElementById('supGeoCity_select')?.value || '';
 
@@ -210,10 +233,10 @@
 
   function matchStreet(streets, city, addressCompact, hints = {}) {
     if (hints.street) {
-      const target = compact(canonicalStreetName(city, hints.street));
+      const target = streetKey(canonicalStreetName(city, hints.street));
 
       const exact = streets.find(
-        (item) => compact(item.value) === target || compact(item.text) === target
+        (item) => streetKey(item.value) === target || streetKey(item.text) === target
       );
 
       return exact
@@ -285,13 +308,7 @@
 
         const key = norm(value);
 
-        if (
-          candidates.some(
-            (item) =>
-              item.key === key &&
-              item.city === city.value
-          )
-        ) {
+        if (candidates.some((item) => item.key === key && item.city === city.value)) {
           continue;
         }
 
@@ -307,10 +324,7 @@
      * Длинные названия проверяем первыми, чтобы условный
      * "Костанай Северный" не проиграл "Костанай".
      */
-    candidates.sort(
-      (a, b) =>
-        b.name.length - a.name.length
-    );
+    candidates.sort((a, b) => b.name.length - a.name.length);
 
     for (const candidate of candidates) {
       const escaped = escapeRegExp(candidate.name);
@@ -334,9 +348,7 @@
       if (match) {
         return {
           city: candidate.city,
-          query: cleanAddressSeparators(
-            original.slice(match[0].length)
-          )
+          query: cleanAddressSeparators(original.slice(match[0].length))
         };
       }
 
@@ -357,35 +369,22 @@
       match = original.match(anywherePattern);
 
       if (match) {
-        const cityStart =
-          match.index +
-          match[1].length;
+        const cityStart = match.index + match[1].length;
 
-        const cityEnd =
-          match.index +
-          match[0].length;
+        const cityEnd = match.index + match[0].length;
 
         return {
           city: candidate.city,
-          query: cleanAddressSeparators(
-            original.slice(0, cityStart) +
-            original.slice(cityEnd)
-          )
+          query: cleanAddressSeparators(original.slice(0, cityStart) + original.slice(cityEnd))
         };
       }
     }
 
     return {
       city: '',
-      query: cleanAddressSeparators(
-        original.replace(
-          /^(?:г(?:ород)?\.?)\s*/iu,
-          ''
-        )
-      )
+      query: cleanAddressSeparators(original.replace(/^(?:город|г)(?:\.\s*|\s+)/iu, ''))
     };
   }
-
 
   function escapeHTML(value) {
     return String(value)
@@ -437,6 +436,19 @@
   }
 
   async function dbGet(key) {
+    if (levelCache.has(key)) return levelCache.get(key);
+    if (cacheReads.has(key)) return cacheReads.get(key);
+    const pending = readCachedLevel(key)
+      .then((record) => {
+        if (record && !levelCache.has(key)) levelCache.set(key, record);
+        return levelCache.get(key) || record;
+      })
+      .finally(() => cacheReads.delete(key));
+    cacheReads.set(key, pending);
+    return pending;
+  }
+
+  async function readCachedLevel(key) {
     const db = await openDB();
     if (!db) return null;
 
@@ -453,16 +465,14 @@
   }
 
   async function dbPut(key, items) {
+    const record = { key, updatedAt: Date.now(), items };
+    levelCache.set(key, record);
     const db = await openDB();
     if (!db) return;
 
     try {
       const tx = db.transaction(CFG.STORE, 'readwrite');
-      tx.objectStore(CFG.STORE).put({
-        key,
-        updatedAt: Date.now(),
-        items
-      });
+      tx.objectStore(CFG.STORE).put(record);
     } catch (_) {}
   }
 
@@ -527,8 +537,11 @@
 
     const cached = await dbGet(key);
 
-    if (cached?.items?.length && !options.forceFresh) {
-      if (options.backgroundRefresh !== false) {
+    if (Array.isArray(cached?.items) && !options.forceFresh) {
+      if (
+        options.backgroundRefresh !== false &&
+        Date.now() - (cached.updatedAt || 0) >= CFG.CACHE_STALE_MS
+      ) {
         scheduleRevalidate(city, street, building);
       }
 
@@ -693,21 +706,15 @@
     const apartmentMarker =
       /(?:квартира|[кk][вv])\.?\s*[:#№-]?\s*([0-9а-яА-ЯёЁa-zA-Z/_()-]+)\s*$/iu;
 
-    const apartmentMatch =
-      source.match(apartmentMarker);
+    const apartmentMatch = source.match(apartmentMarker);
 
     if (apartmentMatch) {
-      result.apartment =
-        apartmentMatch[1].trim();
+      result.apartment = apartmentMatch[1].trim();
 
-      source =
-        source
-          .slice(
-            0,
-            apartmentMatch.index
-          )
-          .trim()
-          .replace(/[\s,;:]+$/g, '');
+      source = source
+        .slice(0, apartmentMatch.index)
+        .trim()
+        .replace(/[\s,;:]+$/g, '');
     }
 
     /*
@@ -723,22 +730,15 @@
     const buildingMarker =
       /(?:дом|[дd])\.?\s*[:#№-]?\s*([0-9]+(?:[/_][0-9]+)?[а-яА-ЯёЁa-zA-Z]?)\s*$/iu;
 
-    const buildingMatch =
-      source.match(buildingMarker);
+    const buildingMatch = source.match(buildingMarker);
 
     if (buildingMatch) {
-      result.building =
-        buildingMatch[1]
-          .replace(/\s+/g, '');
+      result.building = buildingMatch[1].replace(/\s+/g, '');
 
-      source =
-        source
-          .slice(
-            0,
-            buildingMatch.index
-          )
-          .trim()
-          .replace(/[\s,;:]+$/g, '');
+      source = source
+        .slice(0, buildingMatch.index)
+        .trim()
+        .replace(/[\s,;:]+$/g, '');
     }
 
     /*
@@ -746,48 +746,31 @@
      * "улица + дом". Поддерживаем как обычный пробел, так и
      * компактный Береке79.
      */
-    if (
-      result.apartment &&
-      !result.building
-    ) {
-      const spacedStreetBuilding =
-        source.match(
-          /^\s*(.+?)\s+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?\s*$/u
-        );
+    if (result.apartment && !result.building) {
+      const spacedStreetBuilding = source.match(
+        /^\s*(.+?)\s+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?\s*$/u
+      );
 
       if (spacedStreetBuilding) {
-        result.street =
-          spacedStreetBuilding[1]
-            .trim()
-            .replace(/[\s,;:]+$/g, '');
+        result.street = spacedStreetBuilding[1].trim().replace(/[\s,;:]+$/g, '');
 
-        result.building =
-          spacedStreetBuilding[2]
-            .replace(/\s+/g, '');
+        result.building = spacedStreetBuilding[2].replace(/\s+/g, '');
 
-        result.cleaned =
-          result.street;
+        result.cleaned = result.street;
 
         return result;
       }
 
-      const compactStreetBuilding =
-        source.match(
-          /^\s*(.*[а-яА-ЯёЁa-zA-Z])\s*([0-9]+(?:[/_][0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?\s*$/u
-        );
+      const compactStreetBuilding = source.match(
+        /^\s*(.*[а-яА-ЯёЁa-zA-Z])\s*([0-9]+(?:[/_][0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?\s*$/u
+      );
 
       if (compactStreetBuilding) {
-        result.street =
-          compactStreetBuilding[1]
-            .trim()
-            .replace(/[\s,;:]+$/g, '');
+        result.street = compactStreetBuilding[1].trim().replace(/[\s,;:]+$/g, '');
 
-        result.building =
-          compactStreetBuilding[2]
-            .replace(/\s+/g, '');
+        result.building = compactStreetBuilding[2].replace(/\s+/g, '');
 
-        result.cleaned =
-          result.street;
+        result.cleaned = result.street;
 
         return result;
       }
@@ -797,15 +780,10 @@
      * Если и дом, и квартира пришли через маркеры,
      * всё оставшееся = улица.
      */
-    if (
-      result.apartment &&
-      result.building
-    ) {
-      result.street =
-        source.trim();
+    if (result.apartment && result.building) {
+      result.street = source.trim();
 
-      result.cleaned =
-        result.street;
+      result.cleaned = result.street;
 
       return result;
     }
@@ -820,26 +798,18 @@
      *
      * Две последние части всегда дом + квартира.
      */
-    const namedTriplet =
-      source.match(
-        /^\s*(.*[а-яА-ЯёЁa-zA-Z].*?)[\s,;]+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?[\s,;]+([0-9а-яА-ЯёЁa-zA-Z/_()-]+)\s*$/u
-      );
+    const namedTriplet = source.match(
+      /^\s*(.*[а-яА-ЯёЁa-zA-Z].*?)[\s,;]+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?[\s,;]+([0-9а-яА-ЯёЁa-zA-Z/_()-]+)\s*$/u
+    );
 
     if (namedTriplet) {
-      result.street =
-        namedTriplet[1]
-          .trim()
-          .replace(/[\s,;:]+$/g, '');
+      result.street = namedTriplet[1].trim().replace(/[\s,;:]+$/g, '');
 
-      result.building =
-        namedTriplet[2]
-          .replace(/\s+/g, '');
+      result.building = namedTriplet[2].replace(/\s+/g, '');
 
-      result.apartment =
-        namedTriplet[3].trim();
+      result.apartment = namedTriplet[3].trim();
 
-      result.cleaned =
-        result.street;
+      result.cleaned = result.street;
 
       return result;
     }
@@ -848,33 +818,24 @@
      * Только улица + дом, без квартиры.
      * Нужен в том числе для показа самого дома.
      */
-    const streetBuilding =
-      source.match(
-        /^\s*(.*[а-яА-ЯёЁa-zA-Z].*?)[\s,;]+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?\s*$/u
-      );
+    const streetBuilding = source.match(
+      /^\s*(.*[а-яА-ЯёЁa-zA-Z].*?)[\s,;]+([0-9]+(?:\s*[/_]\s*[0-9]+)?[а-яА-ЯёЁa-zA-Z]?)(?:\s*\([^)]*\))?\s*$/u
+    );
 
     if (streetBuilding) {
-      result.street =
-        streetBuilding[1]
-          .trim()
-          .replace(/[\s,;:]+$/g, '');
+      result.street = streetBuilding[1].trim().replace(/[\s,;:]+$/g, '');
 
-      result.building =
-        streetBuilding[2]
-          .replace(/\s+/g, '');
+      result.building = streetBuilding[2].replace(/\s+/g, '');
 
-      result.cleaned =
-        result.street;
+      result.cleaned = result.street;
 
       return result;
     }
 
-    result.cleaned =
-      source;
+    result.cleaned = source;
 
     return result;
   }
-
 
   function bestPrefix(items, remainder) {
     let best = null;
@@ -1082,9 +1043,13 @@
 
     const localMatches = [];
 
-    for (const city of cities) {
-      const cache = await dbGet(levelKey(city.value, '', ''));
-
+    const cachedCities = await Promise.all(
+      cities.map(async (city) => ({
+        city,
+        cache: await dbGet(levelKey(city.value, '', ''))
+      }))
+    );
+    for (const { city, cache } of cachedCities) {
       if (!cache?.items?.length) {
         continue;
       }
@@ -1153,87 +1118,51 @@
 
     if (!cities.length) return [];
 
-    const extracted =
-      extractCityFromQuery(
-        rawQuery,
-        cities
-      );
+    const extracted = extractCityFromQuery(rawQuery, cities);
 
-    const hints =
-      parseAddressHints(
-        extracted.query
-      );
+    const hints = parseAddressHints(extracted.query);
 
-    const raw =
-      hints.cleaned;
+    const raw = hints.cleaned;
 
-    const qCompact =
-      compact(raw);
+    const qCompact = compact(raw);
 
     if (!qCompact) return [];
 
     let cityCandidates;
 
     if (extracted.city) {
-      cityCandidates =
-        [extracted.city];
+      cityCandidates = [extracted.city];
     } else {
-      cityCandidates =
-        await getCandidateCitiesForAddress(
-          cities,
-          qCompact,
-          hints,
-          progress
-        );
+      cityCandidates = await getCandidateCitiesForAddress(cities, qCompact, hints, progress);
     }
 
     if (!cityCandidates.length) {
       return [];
     }
 
-    const perCity =
-      await Promise.all(
-        cityCandidates.map(
-          async (city) => {
-            progress?.(
-              `Проверяю ${city}...`
-            );
+    const perCity = await Promise.all(
+      cityCandidates.map(async (city) => {
+        progress?.(`Проверяю ${city}...`);
 
-            try {
-              return await resolveInCity(
-                city,
-                qCompact,
-                null,
-                hints
-              );
-            } catch (error) {
-              log(
-                'resolve city failed',
-                city,
-                error
-              );
+        try {
+          return await resolveInCity(city, qCompact, null, hints);
+        } catch (error) {
+          log('resolve city failed', city, error);
 
-              return [];
-            }
-          }
-        )
-      );
+          return [];
+        }
+      })
+    );
 
-    const results =
-      perCity.flat();
+    const results = perCity.flat();
 
     const unique = [];
     const seen = new Set();
 
     for (const item of results) {
-      const key = [
-        item.kind,
-        item.city,
-        item.street,
-        item.building,
-        item.room,
-        item.actionId
-      ].join('|');
+      const key = [item.kind, item.city, item.street, item.building, item.room, item.actionId].join(
+        '|'
+      );
 
       if (!seen.has(key)) {
         seen.add(key);
@@ -1243,7 +1172,6 @@
 
     return unique;
   }
-
 
   function optionFromCachedItem(item) {
     const option = document.createElement('option');
@@ -2711,7 +2639,7 @@
         continue;
       }
 
-      const match = optionMatchesFilter(select, option, q);
+      const match = optionMatchesFilter(select, option, query);
 
       option.hidden = !match;
 
@@ -2814,7 +2742,7 @@
           continue;
         }
 
-        const match = optionMatchesFilter(select, option, q);
+        const match = optionMatchesFilter(select, option, input.value);
 
         option.hidden = !match;
 
@@ -3080,7 +3008,7 @@
 
   function boot() {
     ensureStyles();
-    installToolbarButton();
+    document.getElementById('wsa-toolbar-cell')?.remove();
 
     if (!patchWoToMFunctions()) {
       let attempts = 0;
@@ -3097,26 +3025,6 @@
     if (document.getElementById('userSearchContainer')) {
       installSearchUIEnhancements();
     }
-
-    document.addEventListener(
-      'keydown',
-      (event) => {
-        if (event.ctrlKey && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
-          const target = event.target;
-
-          const typing =
-            target instanceof HTMLInputElement ||
-            target instanceof HTMLTextAreaElement ||
-            target?.isContentEditable;
-
-          if (!typing) {
-            event.preventDefault();
-            openModal();
-          }
-        }
-      },
-      true
-    );
   }
 
   if (document.readyState === 'loading') {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chatwoot — уведомления о сообщениях
 // @namespace    uplink-chatwoot
-// @version      2.3.4
+// @version      2.4.0
 // @description  Уведомления о новых сообщениях с защитой от повторов и настройками разделов.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -182,6 +182,27 @@
     saveJSON(SETTINGS_KEY, settings);
   }
 
+  function channelName(node) {
+    const header = node.querySelector('.conversation--user')?.previousElementSibling;
+    const source =
+      header?.querySelector('[title]') ||
+      node.querySelector('[class*="i-woot-"]')?.closest('[title]');
+    return clean(source?.getAttribute('title') || '');
+  }
+
+  function channelKey(name) {
+    return `${getAccount()}:channel:${clean(name).toLocaleLowerCase('ru')}`;
+  }
+
+  function channelAllowed(name, groups = getSidebarGroups()) {
+    const sources = groups.find((group) => group.title === 'Источники')?.items || [];
+    const matching = sources.filter((item) => channelKey(item.name) === channelKey(name));
+    const choice = settings[channelKey(name)];
+    if (choice === false || matching.some((item) => settings[item.key] === false)) return false;
+    if (!settings[`${getAccount()}:channelsOnly`]) return true;
+    return !!name && (choice === true || matching.some((item) => settings[item.key] === true));
+  }
+
   const BELL_ON = `
     <svg width="16" height="16" viewBox="0 0 24 24"
       fill="none" stroke="currentColor" stroke-width="1.8"
@@ -352,18 +373,55 @@
     const groups = getSidebarGroups();
 
     for (const group of groups) {
+      if (group.title === 'Источники') continue;
       addHeading(menu, group.title);
 
       for (const item of group.items) {
         menu.appendChild(
-          makeSwitch(item.name, isAllowed(item.key), (value) => setAllowed(item.key, value))
+          makeSwitch(item.name, isAllowed(item.key), (value) => {
+            setAllowed(item.key, value);
+          })
         );
       }
     }
 
+    addHeading(menu, 'Источники во всех разделах');
+    const onlyKey = `${getAccount()}:channelsOnly`;
+    menu.appendChild(
+      makeSwitch('Только выбранные источники', settings[onlyKey] === true, (value) => {
+        setAllowed(onlyKey, value);
+        renderMenu();
+      })
+    );
+    const names = new Set(
+      groups.find((group) => group.title === 'Источники')?.items.map((item) => item.name) || []
+    );
+    document.querySelectorAll('.conversation').forEach((node) => {
+      const name = channelName(node);
+      if (name) names.add(name);
+    });
+    const prefix = `${getAccount()}:channel:`;
+    for (const key of Object.keys(settings))
+      if (key.startsWith(prefix)) {
+        const name = key.slice(prefix.length);
+        if (![...names].some((item) => channelKey(item) === key)) names.add(name);
+      }
+    for (const name of names) {
+      menu.appendChild(
+        makeSwitch(name, channelAllowed(name, groups), (value) => {
+          setAllowed(channelKey(name), value);
+          for (const item of groups.find((group) => group.title === 'Источники')?.items || []) {
+            if (channelKey(item.name) === channelKey(name)) setAllowed(item.key, value);
+          }
+          renderMenu();
+        })
+      );
+    }
+
     const note = document.createElement('div');
 
-    note.textContent = 'Настройки сохраняются отдельно для каждого раздела.';
+    note.textContent =
+      'Источник берётся из карточки диалога. Фильтр действует и в «Все диалоги». В режиме «Только выбранные» уведомления от неизвестных источников отключены.';
 
     note.style.cssText = `
       font-size:10px;
@@ -602,7 +660,7 @@
         node.querySelector('.h-6')?.textContent
     );
 
-    const channel = clean(node.querySelector('[title]')?.getAttribute('title'));
+    const channel = channelName(node);
 
     const badge = Array.from(node.querySelectorAll('span.bg-n-teal-9')).find((span) => {
       const cls = String(span.className || '');
@@ -680,9 +738,11 @@
 
     const scope = getScope();
     const allowed = enabled && isAllowed(scope);
+    const groups = getSidebarGroups();
 
     for (const item of items) {
       const data = getConversationData(item);
+      const allowedHere = allowed && channelAllowed(data.channel, groups);
 
       if (!data.user || !data.message) continue;
 
@@ -717,7 +777,7 @@
         changed = true;
 
         // Новая карточка в DOM не обязательно новый диалог — проверяем непрочитанные.
-        if (allowed && data.unreadCount > 0) {
+        if (allowedHere && data.unreadCount > 0) {
           const record = state[data.key];
 
           record.lastNotified = signature;
@@ -734,7 +794,7 @@
       const messageChanged = data.message !== old.message;
 
       const shouldNotify =
-        allowed &&
+        allowedHere &&
         data.unreadCount > 0 &&
         (unreadIncreased || messageChanged) &&
         old.lastNotified !== signature;

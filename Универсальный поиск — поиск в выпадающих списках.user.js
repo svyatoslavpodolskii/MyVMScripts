@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Универсальный поиск — поиск в выпадающих списках
 // @namespace    local.dropdown.search
-// @version      1.1.3
+// @version      1.1.4
 // @description  Поиск в стандартных и пользовательских выпадающих списках на любых сайтах.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -37,7 +37,10 @@
   const results = document.createElement('div');
   host.append(input, results);
   document.documentElement.append(host);
-  const isNative = (el) => el?.matches?.('select:not([multiple])') && el.size <= 1;
+  const isNative = (el) =>
+    el?.matches?.('select:not([multiple])') &&
+    el.size <= 1 &&
+    [...el.options].filter((option) => !option.hidden && option.textContent.trim()).length >= 5;
   function close() {
     host.style.display = 'none';
     active = null;
@@ -154,7 +157,19 @@
   });
 
   const wired = new WeakSet();
+  const enhancements = new WeakMap();
   function enhance(menu) {
+    const items = [...menu.querySelectorAll(ITEM)].filter((x) => x.textContent.trim());
+    const enhancement = enhancements.get(menu);
+    if (items.length < 5) {
+      if (enhancement) {
+        enhancement.field.remove();
+        for (const [item, display] of enhancement.displays) item.style.display = display;
+        enhancements.delete(menu);
+        wired.delete(menu);
+      }
+      return;
+    }
     if (
       wired.has(menu) ||
       menu.closest('select') ||
@@ -163,10 +178,11 @@
       )
     )
       return;
-    const items = [...menu.querySelectorAll(ITEM)].filter((x) => x.textContent.trim());
-    if (items.length < 3 || items.length > 1000) return;
+    if (items.length > 1000) return;
     wired.add(menu);
     const field = document.createElement('input');
+    const displays = new Map();
+    enhancements.set(menu, { field, displays });
     field.type = 'search';
     field.placeholder = 'Поиск в списке…';
     field.setAttribute('aria-label', 'Поиск в списке');
@@ -183,7 +199,10 @@
       const q = field.value.toLocaleLowerCase();
       for (const item of menu.querySelectorAll(ITEM)) {
         if (item.contains(field)) continue;
-        item.style.display = item.textContent.toLocaleLowerCase().includes(q) ? '' : 'none';
+        if (!displays.has(item)) displays.set(item, item.style.display);
+        item.style.display = item.textContent.toLocaleLowerCase().includes(q)
+          ? displays.get(item)
+          : 'none';
       }
     });
     menu.prepend(field);
@@ -191,6 +210,7 @@
   let scheduled = false;
   const scan = () => {
     scheduled = false;
+    if (active && !isNative(active)) close();
     for (const menu of document.querySelectorAll(MENU)) {
       if (menu.getBoundingClientRect().width && menu.getBoundingClientRect().height) enhance(menu);
     }
