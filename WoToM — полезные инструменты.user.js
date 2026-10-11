@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WoToM — полезные инструменты
 // @namespace    uplink-wotom-utilities
-// @version      1.1.0
+// @version      1.1.1
 // @description  Обновление активной карточки договора рядом с кнопкой закрытия окна.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -36,7 +36,8 @@
       const close = header.querySelector('.msgboxClass_close');
       if (!close || !header.closest('.msgbboxClass')?.querySelector('[id="userSearchContainer"]'))
         continue;
-      let button = header.querySelector('.wtu-refresh');
+      const dialog = header.closest('.msgbboxClass');
+      let button = dialog.querySelector(':scope > .wtu-refresh');
       if (!button) {
         button = document.createElement('button');
         button.className = 'wtu-refresh';
@@ -61,7 +62,7 @@
             scan();
           }
         });
-        close.after(button);
+        dialog.append(button);
       }
 
       const tile = activeTile(header);
@@ -74,7 +75,7 @@
 
   const style = document.createElement('style');
   style.textContent = `
-    .wtu-refresh { float:right; width:35px; height:35px; padding:0; margin-right:4px; border:0; border-radius:4px; background:#1976d2; color:#fff; font-size:24px; line-height:35px; text-align:center; cursor:pointer; }
+    .msgbboxClass > .wtu-refresh { position:absolute; top:5px; right:38px; width:24px; height:24px; padding:0; margin:0; border:0; border-radius:50%; background:#1976d2; color:#fff; font-size:20px; line-height:24px; text-align:center; cursor:pointer; z-index:1; }
     .wtu-refresh:hover { background:#1565c0; }
     .wtu-refresh:disabled { opacity:.5; cursor:default; }
   `;
