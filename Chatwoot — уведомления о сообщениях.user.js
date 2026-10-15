@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chatwoot — уведомления о сообщениях
 // @namespace    uplink-chatwoot
-// @version      2.5.1
+// @version      2.5.2
 // @description  Уведомления с фильтром источников и подсветка последних сообщений клиента.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -484,11 +484,11 @@
       style.id = `${MENU_ID}Theme`;
       style.textContent = `
         .conversation.uplink-client-last {
-          background-color: rgba(234, 179, 8, .14) !important;
+          background-color: rgba(148, 163, 184, .08) !important;
         }
         .dark .conversation.uplink-client-last,
         [data-theme="dark"] .conversation.uplink-client-last {
-          background-color: rgba(250, 204, 21, .16) !important;
+          background-color: rgba(148, 163, 184, .09) !important;
         }
         #${MENU_ID} {
           background: #fff;
@@ -749,14 +749,14 @@
     if (button) {
       button.setAttribute('aria-pressed', String(highlight));
       button.title = `Подсветка последних сообщений клиента: ${highlight ? 'включена' : 'выключена'}`;
-      button.style.backgroundColor = highlight ? 'rgba(234,179,8,.3)' : '';
+      button.style.backgroundColor = highlight ? 'rgba(148,163,184,.14)' : '';
     }
     document.querySelectorAll('.conversation').forEach((node) => {
       const preview = node.querySelector('.conversation--user + div');
-      const fromClient = [...(preview?.querySelectorAll('svg path') || [])].some((path) =>
+      const fromUs = [...(preview?.querySelectorAll('svg path') || [])].some((path) =>
         (path.getAttribute('d') || '').startsWith('M9.277 16.221a.75.75')
       );
-      node.classList.toggle('uplink-client-last', highlight && fromClient);
+      node.classList.toggle('uplink-client-last', highlight && !!preview?.textContent.trim() && !fromUs);
     });
   }
 
@@ -769,9 +769,11 @@
       button.id = 'uplinkClientHighlightToggle';
       button.type = 'button';
       button.className = bell.className;
-      button.textContent = '◧';
+      button.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"
+        aria-hidden="true"><path d="m12 3 2.78 5.63L21 9.54l-4.5 4.39 1.06 6.2L12 17.2l-5.56 2.93 1.06-6.2L3 9.54l6.22-.91L12 3Z"/></svg>`;
       button.setAttribute('aria-label', 'Подсветка последних сообщений клиента');
-      button.style.cssText = 'width:24px;height:24px;padding:0;color:#ca8a04;font-size:20px;';
+      button.style.cssText = 'width:24px;height:24px;padding:0;';
       button.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -907,7 +909,7 @@
     }
   }
 
-  log('Версия 2.5.1 запущена');
+  log('Версия 2.5.2 запущена');
 
   setTimeout(tick, 3000);
   setInterval(tick, INTERVAL);
