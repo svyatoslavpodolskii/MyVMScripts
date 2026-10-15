@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chatwoot — уведомления о сообщениях
 // @namespace    uplink-chatwoot
-// @version      2.5.3
+// @version      2.5.4
 // @description  Уведомления с фильтром источников и подсветка последних сообщений клиента.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -491,6 +491,14 @@
         [data-theme="dark"] .conversation.uplink-client-last:not(.active):not(.animate-card-select):not([aria-selected="true"]) {
           background-color: rgba(94, 160, 150, .10) !important;
         }
+        .conversation.uplink-note-last:not(.active):not(.animate-card-select):not([aria-selected="true"]) {
+          background-color: rgba(207, 181, 112, .07) !important;
+          box-shadow: inset 2px 0 rgba(207, 181, 112, .35);
+        }
+        .dark .conversation.uplink-note-last:not(.active):not(.animate-card-select):not([aria-selected="true"]),
+        [data-theme="dark"] .conversation.uplink-note-last:not(.active):not(.animate-card-select):not([aria-selected="true"]) {
+          background-color: rgba(207, 181, 112, .09) !important;
+        }
         #${MENU_ID} {
           background: #fff;
           color: #1e293b;
@@ -757,7 +765,12 @@
       const fromUs = [...(preview?.querySelectorAll('svg path') || [])].some((path) =>
         (path.getAttribute('d') || '').startsWith('M9.277 16.221a.75.75')
       );
-      node.classList.toggle('uplink-client-last', highlight && !!preview?.textContent.trim() && !fromUs);
+      const note = [...(preview?.querySelectorAll('svg path') || [])].some((path) =>
+        (path.getAttribute('d') || '').startsWith('M12 2a4 4 0 0 1 4 4v2')
+      );
+      const hasMessage = highlight && !!preview?.textContent.trim();
+      node.classList.toggle('uplink-client-last', hasMessage && !fromUs && !note);
+      node.classList.toggle('uplink-note-last', hasMessage && note);
     });
   }
 
@@ -910,7 +923,7 @@
     }
   }
 
-  log('Версия 2.5.3 запущена');
+  log('Версия 2.5.4 запущена');
 
   setTimeout(tick, 3000);
   setInterval(tick, INTERVAL);
