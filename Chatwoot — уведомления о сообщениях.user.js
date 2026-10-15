@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chatwoot — уведомления о сообщениях
 // @namespace    uplink-chatwoot
-// @version      2.5.0
+// @version      2.5.1
 // @description  Уведомления с фильтром источников и подсветка последних сообщений клиента.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -745,6 +745,12 @@
 
   function updateHighlights() {
     const highlight = settings[`${getAccount()}:highlightClient`] === true;
+    const button = document.getElementById('uplinkClientHighlightToggle');
+    if (button) {
+      button.setAttribute('aria-pressed', String(highlight));
+      button.title = `Подсветка последних сообщений клиента: ${highlight ? 'включена' : 'выключена'}`;
+      button.style.backgroundColor = highlight ? 'rgba(234,179,8,.3)' : '';
+    }
     document.querySelectorAll('.conversation').forEach((node) => {
       const preview = node.querySelector('.conversation--user + div');
       const fromClient = [...(preview?.querySelectorAll('svg path') || [])].some((path) =>
@@ -752,6 +758,30 @@
       );
       node.classList.toggle('uplink-client-last', highlight && fromClient);
     });
+  }
+
+  function createHighlightButton() {
+    const bell = document.getElementById(BUTTON_ID);
+    if (!bell) return;
+    let button = document.getElementById('uplinkClientHighlightToggle');
+    if (!button) {
+      button = document.createElement('button');
+      button.id = 'uplinkClientHighlightToggle';
+      button.type = 'button';
+      button.className = bell.className;
+      button.textContent = '◧';
+      button.setAttribute('aria-label', 'Подсветка последних сообщений клиента');
+      button.style.cssText = 'width:24px;height:24px;padding:0;color:#ca8a04;font-size:20px;';
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const key = `${getAccount()}:highlightClient`;
+        setAllowed(key, settings[key] !== true);
+        updateHighlights();
+        if (menuOpen) renderMenu();
+      });
+    }
+    if (button.parentElement !== bell.parentElement) bell.before(button);
   }
 
   function scanConversations() {
@@ -870,13 +900,14 @@
       }
 
       createButton();
+      createHighlightButton();
       scanConversations();
     } catch (error) {
       console.error(PREFIX, 'Ошибка:', error);
     }
   }
 
-  log('Версия 2.5.0 запущена');
+  log('Версия 2.5.1 запущена');
 
   setTimeout(tick, 3000);
   setInterval(tick, INTERVAL);
