@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Chatwoot — уведомления о сообщениях
 // @namespace    uplink-chatwoot
-// @version      2.4.0
-// @description  Уведомления о новых сообщениях с защитой от повторов и настройками разделов.
+// @version      2.5.0
+// @description  Уведомления с фильтром источников и подсветка последних сообщений клиента.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
 // @supportURL   https://github.com/svyatoslavpodolskii/MyVMScripts/issues
@@ -360,6 +360,17 @@
       })
     );
 
+    menu.appendChild(
+      makeSwitch(
+        'Подсвечивать последнее сообщение клиента',
+        settings[`${getAccount()}:highlightClient`] === true,
+        (value) => {
+          setAllowed(`${getAccount()}:highlightClient`, value);
+          updateHighlights();
+        }
+      )
+    );
+
     addHeading(menu, 'Текущий раздел');
 
     const scope = getScope();
@@ -472,6 +483,13 @@
       const style = document.createElement('style');
       style.id = `${MENU_ID}Theme`;
       style.textContent = `
+        .conversation.uplink-client-last {
+          background-color: rgba(234, 179, 8, .14) !important;
+        }
+        .dark .conversation.uplink-client-last,
+        [data-theme="dark"] .conversation.uplink-client-last {
+          background-color: rgba(250, 204, 21, .16) !important;
+        }
         #${MENU_ID} {
           background: #fff;
           color: #1e293b;
@@ -725,7 +743,19 @@
     state = Object.fromEntries(entries.slice(0, MAX_STATE));
   }
 
+  function updateHighlights() {
+    const highlight = settings[`${getAccount()}:highlightClient`] === true;
+    document.querySelectorAll('.conversation').forEach((node) => {
+      const preview = node.querySelector('.conversation--user + div');
+      const fromClient = [...(preview?.querySelectorAll('svg path') || [])].some((path) =>
+        (path.getAttribute('d') || '').startsWith('M9.277 16.221a.75.75')
+      );
+      node.classList.toggle('uplink-client-last', highlight && fromClient);
+    });
+  }
+
   function scanConversations() {
+    updateHighlights();
     const list = document.querySelector('.conversations-list');
 
     if (!list) return;
@@ -846,7 +876,7 @@
     }
   }
 
-  log('Версия 2.3 запущена');
+  log('Версия 2.5.0 запущена');
 
   setTimeout(tick, 3000);
   setInterval(tick, INTERVAL);
