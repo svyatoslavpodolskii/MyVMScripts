@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chatwoot — уведомления о сообщениях
 // @namespace    uplink-chatwoot
-// @version      2.5.2
+// @version      2.5.3
 // @description  Уведомления с фильтром источников и подсветка последних сообщений клиента.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -483,12 +483,13 @@
       const style = document.createElement('style');
       style.id = `${MENU_ID}Theme`;
       style.textContent = `
-        .conversation.uplink-client-last {
-          background-color: rgba(148, 163, 184, .08) !important;
+        .conversation.uplink-client-last:not(.active):not(.animate-card-select):not([aria-selected="true"]) {
+          background-color: rgba(94, 160, 150, .07) !important;
+          box-shadow: inset 2px 0 rgba(94, 160, 150, .45);
         }
-        .dark .conversation.uplink-client-last,
-        [data-theme="dark"] .conversation.uplink-client-last {
-          background-color: rgba(148, 163, 184, .09) !important;
+        .dark .conversation.uplink-client-last:not(.active):not(.animate-card-select):not([aria-selected="true"]),
+        [data-theme="dark"] .conversation.uplink-client-last:not(.active):not(.animate-card-select):not([aria-selected="true"]) {
+          background-color: rgba(94, 160, 150, .10) !important;
         }
         #${MENU_ID} {
           background: #fff;
@@ -909,7 +910,7 @@
     }
   }
 
-  log('Версия 2.5.2 запущена');
+  log('Версия 2.5.3 запущена');
 
   setTimeout(tick, 3000);
   setInterval(tick, INTERVAL);
