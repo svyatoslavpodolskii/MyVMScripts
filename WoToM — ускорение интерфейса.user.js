@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WoToM — ускорение интерфейса
 // @namespace    Violentmonkey Scripts
-// @version      4.2.3
+// @version      4.3.0
 // @description  Ускоряет списки заявок WoToM. Мемные загрузчики — только для Святослава Подольского и Надии Шихаревой.
 // @author       Svyatoslav Podolskii
 // @homepageURL  https://github.com/svyatoslavpodolskii/MyVMScripts
@@ -180,6 +180,12 @@
                 content-visibility: auto;
                 contain-intrinsic-size: auto 220px;
             }
+        }
+
+        .tsTileFilterDiv:is(:hover, :focus-within),
+        .conTileFilterDiv:is(:hover, :focus-within) {
+            content-visibility: visible;
+            contain: layout style;
         }
 
 
@@ -1086,6 +1092,24 @@
       return;
     }
 
+    const pendingRoots = new Set();
+    let flushTimer = null;
+
+    function flushImages() {
+      flushTimer = null;
+      const roots = [...pendingRoots];
+      pendingRoots.clear();
+      const rootSet = new Set(roots);
+      for (const node of roots) {
+        if (!node.isConnected) continue;
+        let parent = node.parentElement;
+        while (parent && !rootSet.has(parent)) parent = parent.parentElement;
+        if (parent) continue;
+        scanLoaders(node);
+        optimizeImages(node);
+      }
+    }
+
     const observer = new MutationObserver((mutations) => {
       const operatorName = getOperatorName();
       if (operatorName !== lastOperatorName) {
@@ -1098,6 +1122,12 @@
       }
 
       for (const mutation of mutations) {
+        if (mutation.type !== 'attributes') {
+          const target = mutation.target.nodeType === Node.ELEMENT_NODE
+            ? mutation.target : mutation.target.parentElement;
+          const inner = target?.closest?.('.tileInnerBlock');
+          if (inner) elementHeightCache.delete(inner);
+        }
         if (mutation.type === 'attributes') {
           if (mutation.target instanceof HTMLImageElement) {
             replaceLoader(mutation.target);
@@ -1111,11 +1141,10 @@
             continue;
           }
 
-          scanLoaders(node);
-
-          optimizeImages(node);
+          pendingRoots.add(node);
         }
       }
+      if (pendingRoots.size && flushTimer === null) flushTimer = setTimeout(flushImages, 16);
     });
 
     observer.observe(document.documentElement, {
@@ -1233,6 +1262,8 @@
         // Вызов с true приходит из WoToM: выполняем сразу, без очереди.
 
         if (args[0] === true) {
+          clearTimeout(timer);
+          timer = null;
           return original.apply(this, args);
         }
 
@@ -1458,22 +1489,6 @@
 
   // Общий обход уже делает startLoaderObserver; второй наблюдатель не запускаем.
 
-  // Подбираем зависшую блокировку, если отрисовка уже закончилась.
-
-  setInterval(() => {
-    const lock = document.getElementById('supLockScreenDiv');
-
-    if (!lock) {
-      return;
-    }
-
-    if (!renderQueues.sup.running && !renderQueues.con.running) {
-      try {
-        window.supScreenUnlock?.();
-      } catch (_) {}
-    }
-  }, 2000);
-
   function ready() {
     applyPatches();
 
@@ -1481,7 +1496,7 @@
 
     optimizeImages(document);
 
-    debug('WoToM Optimizer 4.2 active');
+    debug('WoToM Optimizer 4.3 active');
   }
 
   if (document.readyState === 'loading') {
